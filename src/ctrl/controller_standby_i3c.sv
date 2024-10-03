@@ -54,6 +54,7 @@ module controller_standby_i3c
     output logic rx_queue_wvalid_o,
     input logic rx_queue_wready_i,
     output logic [TtiRxDataWidth-1:0] rx_queue_wdata_o,
+    output logic rx_queue_wflush_o,
 
     // TTI: TX Data
     input logic tx_queue_full_i,
@@ -66,6 +67,14 @@ module controller_standby_i3c
     output logic tx_queue_rready_o,
     input logic [TtiTxDataWidth-1:0] tx_queue_rdata_i,
 
+    // Bus condition detection
+    output logic bus_start_o,
+    output logic bus_stop_o,
+
+    // I3C received address (with RnW# bit) for the recovery handler
+    output logic [7:0] bus_addr_o,
+    output logic bus_addr_valid_o,
+
     // Configuration
     input logic phy_en_i,
     input logic [1:0] phy_mux_select_i,
@@ -76,6 +85,7 @@ module controller_standby_i3c
     input logic [19:0] t_su_dat_i,
     input logic [19:0] t_hd_dat_i,
     input logic [19:0] t_r_i,
+    input logic [19:0] t_f_i,
     input logic [19:0] t_bus_free_i,
     input logic [19:0] t_bus_idle_i,
     input logic [19:0] t_bus_available_i
@@ -98,6 +108,9 @@ module controller_standby_i3c
   logic start_detect;
   logic stop_detect;
 
+  logic is_in_hdr_mode;
+  logic hdr_exit_detect;
+
   flow_standby_i3c xflow_standby_i3c (
       .clk_i(clk_i),
       .rst_ni(rst_ni),
@@ -107,6 +120,7 @@ module controller_standby_i3c
       .rx_queue_wvalid_o(rx_queue_wvalid_o),
       .rx_queue_wready_i(rx_queue_wready_i),
       .rx_queue_wdata_o(rx_queue_wdata_o),
+      .rx_queue_wflush_o(rx_queue_wflush_o),
 
       .tx_queue_full_i  (tx_queue_full_i),
       .tx_queue_empty_i (tx_queue_empty_i),
@@ -145,6 +159,8 @@ module controller_standby_i3c
 
   // Target FSM <--> DAA
   logic [6:0] bus_addr;
+  logic bus_rnw;
+  logic bus_addr_match;
   logic bus_addr_valid;
   logic is_sta_addr_match;
   logic is_dyn_addr_match;
@@ -189,11 +205,14 @@ module controller_standby_i3c
       .rx_fifo_wready_i(rx_byte_ready),
       .transfer_type_o(transfer_type),
       .t_r_i(t_r_i),
+      .t_f_i(t_f_i),
       .tsu_dat_i(t_su_dat_i),
       .thd_dat_i(t_hd_dat_i),
       .is_sta_addr_match(is_sta_addr_match),
       .is_dyn_addr_match(is_dyn_addr_match),
       .bus_addr(bus_addr),
+      .bus_rnw(bus_rnw),
+      .bus_addr_match(bus_addr_match),
       .bus_addr_valid(bus_addr_valid),
       .is_i3c_rsvd_addr_match(is_i3c_rsvd_addr_match),
       .is_any_addr_match(is_any_addr_match),
@@ -213,8 +232,11 @@ module controller_standby_i3c
       .sda_i(ctrl_sda_i),
       .t_hd_dat_i(t_hd_dat_i),
       .t_r_i(t_r_i),
+      .t_f_i(t_f_i),
       .start_detect_o(start_detect),
-      .stop_detect_o(stop_detect)
+      .stop_detect_o(stop_detect),
+      .is_in_hdr_mode_i(is_in_hdr_mode),
+      .hdr_exit_detect_o(hdr_exit_detect)
   );
 
   bus_timers xbus_timers (
@@ -246,5 +268,12 @@ module controller_standby_i3c
       .daa_unique_response(daa_unique_response)
   );
 
+  // Expose bus condition detection
+  assign bus_start_o = start_detect;
+  assign bus_stop_o  = stop_detect;
+
+  // Expose the received address + RnW bit
+  assign bus_addr_o = {bus_addr, bus_rnw};
+  assign bus_addr_valid_o = bus_addr_match;
 
 endmodule

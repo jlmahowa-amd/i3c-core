@@ -133,7 +133,7 @@ module axi_sub_arb import axi_pkg::*; #(
         r_rdata = rdata;
     end
 
-    //`CALIPTRA_ASSERT_NEVER(AXI_SUB_ARB_CONFLICT, r_dv && !r_hld && w_dv && !w_hld, clk, !rst_n)
+    `CALIPTRA_ASSERT_NEVER(AXI_SUB_ARB_CONFLICT, r_dv && !r_hld && w_dv && !w_hld, clk, !rst_n)
 
 
 endmodule

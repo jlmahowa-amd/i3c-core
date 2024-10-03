@@ -4,15 +4,15 @@
 import I3CCSR_pkg::*;
 
 module i3c_wrapper #(
-//`ifdef I3C_USE_AHB
-//    parameter int unsigned AhbDataWidth = `AHB_DATA_WIDTH,
-//    parameter int unsigned AhbAddrWidth = `AHB_ADDR_WIDTH,
-//`elsif I3C_USE_AXI
+`ifdef I3C_USE_AHB
+    parameter int unsigned AhbDataWidth = `AHB_DATA_WIDTH,
+    parameter int unsigned AhbAddrWidth = `AHB_ADDR_WIDTH,
+`elsif I3C_USE_AXI
     parameter int unsigned AxiDataWidth = `AXI_DATA_WIDTH,
     parameter int unsigned AxiAddrWidth = `AXI_ADDR_WIDTH,
     parameter int unsigned AxiUserWidth = `AXI_USER_WIDTH,
     parameter int unsigned AxiIdWidth = `AXI_ID_WIDTH,
-//`endif
+`endif
     parameter int unsigned DatAw = i3c_pkg::DatAw,
     parameter int unsigned DctAw = i3c_pkg::DctAw,
 
@@ -104,8 +104,8 @@ module i3c_wrapper #(
     output logic sel_od_pp_o
 `else
     // I3C bus IO
-    inout  logic i3c_scl_io,
-    inout  logic i3c_sda_io
+    inout  wire i3c_scl_io,
+    inout  wire i3c_sda_io
 `endif
 
     // TODO: Add interrupts

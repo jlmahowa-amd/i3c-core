@@ -26,8 +26,8 @@ module controller
 
     parameter int unsigned TtiRxDescDataWidth = 32,
     parameter int unsigned TtiTxDescDataWidth = 32,
-    parameter int unsigned TtiRxDataWidth = 32,
-    parameter int unsigned TtiTxDataWidth = 32,
+    parameter int unsigned TtiRxDataWidth = 8,
+    parameter int unsigned TtiTxDataWidth = 8,
     parameter int unsigned TtiIbiDataWidth = 32,
 
     parameter int unsigned TtiRxDescThldWidth = 8,
@@ -114,6 +114,7 @@ module controller
     output logic tti_rx_queue_wvalid_o,
     input logic tti_rx_queue_wready_i,
     output logic [TtiRxDataWidth-1:0] tti_rx_queue_wdata_o,
+    output logic tti_rx_queue_wflush_o,
 
     // TTI: TX Data
     input logic tti_tx_queue_full_i,
@@ -147,6 +148,14 @@ module controller
     output logic [    127:0] dct_wdata_hw_o,
     input  logic [    127:0] dct_rdata_hw_i,
 
+    // I2C/I3C Bus condition detection
+    output logic bus_start_o,
+    output logic bus_stop_o,
+
+    // I2C/I3C received address (with RnW# bit) for the recovery handler
+    output logic [7:0] bus_addr_o,
+    output logic bus_addr_valid_o,
+
     input  logic i3c_fsm_en_i,
     output logic i3c_fsm_idle_o,
 
@@ -164,6 +173,7 @@ module controller
     input logic [19:0] t_hd_dat_i,
     input logic [19:0] t_su_dat_i,
     input logic [19:0] t_r_i,
+    input logic [19:0] t_f_i,
     input logic [19:0] t_bus_free_i,
     input logic [19:0] t_bus_idle_i,
     input logic [19:0] t_bus_available_i
@@ -253,6 +263,7 @@ module controller
       .i3c_standby_en_i(i3c_standby_en_i),
       .t_hd_dat_i(t_hd_dat_i),
       .t_r_i(t_r_i),
+      .t_f_i(t_f_i),
       .t_bus_free_i(t_bus_free_i),
       .t_bus_idle_i(t_bus_idle_i),
       .t_bus_available_i(t_bus_available_i)
@@ -290,6 +301,7 @@ module controller
       .rx_queue_wvalid_o(tti_rx_queue_wvalid_o),
       .rx_queue_wready_i(tti_rx_queue_wready_i),
       .rx_queue_wdata_o(tti_rx_queue_wdata_o),
+      .rx_queue_wflush_o(tti_rx_queue_wflush_o),
       .tx_queue_full_i(tti_tx_queue_full_i),
       .tx_queue_start_thld_i(tti_tx_queue_start_thld_i),
       .tx_queue_start_thld_trig_i(tti_tx_queue_start_thld_trig_i),
@@ -299,6 +311,10 @@ module controller
       .tx_queue_rvalid_i(tti_tx_queue_rvalid_i),
       .tx_queue_rready_o(tti_tx_queue_rready_o),
       .tx_queue_rdata_i(tti_tx_queue_rdata_i),
+      .bus_start_o(bus_start_o),
+      .bus_stop_o(bus_stop_o),
+      .bus_addr_o(bus_addr_o),
+      .bus_addr_valid_o(bus_addr_valid_o),
       .phy_en_i(phy_en_i),
       .phy_mux_select_i(phy_mux_select_i),
       .i2c_active_en_i(i2c_active_en_i),
@@ -308,6 +324,7 @@ module controller
       .t_su_dat_i(t_su_dat_i),
       .t_hd_dat_i(t_hd_dat_i),
       .t_r_i(t_r_i),
+      .t_f_i(t_f_i),
       .t_bus_free_i(t_bus_free_i),
       .t_bus_idle_i(t_bus_idle_i),
       .t_bus_available_i(t_bus_available_i)

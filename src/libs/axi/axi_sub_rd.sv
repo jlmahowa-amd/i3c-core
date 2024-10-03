@@ -360,43 +360,43 @@ module axi_sub_rd import axi_pkg::*; #(
     // --------------------------------------- //
     // Formal Properties                       //
     // --------------------------------------- //
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARVALID, s_axi_if.arvalid, clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARREADY, s_axi_if.arready, clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARADDR , (s_axi_if.arvalid ? s_axi_if.araddr  : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARBURST, (s_axi_if.arvalid ? s_axi_if.arburst : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARSIZE , (s_axi_if.arvalid ? s_axi_if.arsize  : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARLEN  , (s_axi_if.arvalid ? s_axi_if.arlen   : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARUSER , (s_axi_if.arvalid ? s_axi_if.aruser  : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARID   , (s_axi_if.arvalid ? s_axi_if.arid    : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARLOCK , (s_axi_if.arvalid ? s_axi_if.arlock  : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RVALID , s_axi_if.rvalid , clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RREADY , s_axi_if.rready , clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RDATA  , (s_axi_if.rvalid ? s_axi_if.rdata : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RRESP  , (s_axi_if.rvalid ? s_axi_if.rresp : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RID    , (s_axi_if.rvalid ? s_axi_if.rid   : '0), clk, !rst_n)
-    //`CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RLAST  , (s_axi_if.rvalid ? s_axi_if.rlast : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARVALID, s_axi_if.arvalid, clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARREADY, s_axi_if.arready, clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARADDR , (s_axi_if.arvalid ? s_axi_if.araddr  : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARBURST, (s_axi_if.arvalid ? s_axi_if.arburst : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARSIZE , (s_axi_if.arvalid ? s_axi_if.arsize  : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARLEN  , (s_axi_if.arvalid ? s_axi_if.arlen   : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARUSER , (s_axi_if.arvalid ? s_axi_if.aruser  : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARID   , (s_axi_if.arvalid ? s_axi_if.arid    : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_ARLOCK , (s_axi_if.arvalid ? s_axi_if.arlock  : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RVALID , s_axi_if.rvalid , clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RREADY , s_axi_if.rready , clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RDATA  , (s_axi_if.rvalid ? s_axi_if.rdata : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RRESP  , (s_axi_if.rvalid ? s_axi_if.rresp : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RID    , (s_axi_if.rvalid ? s_axi_if.rid   : '0), clk, !rst_n)
+    `CALIPTRA_ASSERT_KNOWN(AXI_SUB_X_RLAST  , (s_axi_if.rvalid ? s_axi_if.rlast : '0), clk, !rst_n)
 
     // Handshake rules
-    //`CALIPTRA_ASSERT      (AXI_SUB_AR_HSHAKE_ERR, (s_axi_if.arvalid && !s_axi_if.arready) |=> s_axi_if.arvalid, clk, !rst_n)
-    //`CALIPTRA_ASSERT      (AXI_SUB_R_HSHAKE_ERR,  (s_axi_if.rvalid  && !s_axi_if.rready ) |=> s_axi_if.rvalid,  clk, !rst_n)
+    `CALIPTRA_ASSERT      (AXI_SUB_AR_HSHAKE_ERR, (s_axi_if.arvalid && !s_axi_if.arready) |=> s_axi_if.arvalid, clk, !rst_n)
+    `CALIPTRA_ASSERT      (AXI_SUB_R_HSHAKE_ERR,  (s_axi_if.rvalid  && !s_axi_if.rready ) |=> s_axi_if.rvalid,  clk, !rst_n)
 
-    //`CALIPTRA_ASSERT_NEVER(ERR_AXI_RD_DROP  , dp_rvalid[0] && !dp_rready[0], clk, !rst_n)
-    //`CALIPTRA_ASSERT_NEVER(ERR_AXI_RD_X     , dp_rvalid[0] && $isunknown({dp_rdata[0],dp_xfer_ctx[0]}), clk, !rst_n)
+    `CALIPTRA_ASSERT_NEVER(ERR_AXI_RD_DROP  , dp_rvalid[0] && !dp_rready[0], clk, !rst_n)
+    `CALIPTRA_ASSERT_NEVER(ERR_AXI_RD_X     , dp_rvalid[0] && $isunknown({dp_rdata[0],dp_xfer_ctx[0]}), clk, !rst_n)
     // Exclusive access rules:
     //   - Must have an address that is aligned to burst byte count
     //   - Byte count must be power of 2 inside 1:128
     //   - Max burst length = 16
-    //`CALIPTRA_ASSERT      (ERR_AXI_EX_UNALGN  , (s_axi_if.arvalid && s_axi_if.arlock) |-> ~|(s_axi_if.araddr & ((1 << $clog2((1<<s_axi_if.arsize)*(s_axi_if.arlen+1)))-1)), clk, !rst_n)
-    //`CALIPTRA_ASSERT      (ERR_AXI_EX_BYTE_CNT, (s_axi_if.arvalid && s_axi_if.arlock) |-> ((1<<s_axi_if.arsize)*(s_axi_if.arlen+1) inside {1,2,4,8,16,32,64,128}), clk, !rst_n)
-    //`CALIPTRA_ASSERT      (ERR_AXI_EX_MAX_LEN,  (s_axi_if.arvalid && s_axi_if.arlock) |-> (s_axi_if.arlen < 16), clk, !rst_n)
+    `CALIPTRA_ASSERT      (ERR_AXI_EX_UNALGN  , (s_axi_if.arvalid && s_axi_if.arlock) |-> ~|(s_axi_if.araddr & ((1 << $clog2((1<<s_axi_if.arsize)*(s_axi_if.arlen+1)))-1)), clk, !rst_n)
+    `CALIPTRA_ASSERT      (ERR_AXI_EX_BYTE_CNT, (s_axi_if.arvalid && s_axi_if.arlock) |-> ((1<<s_axi_if.arsize)*(s_axi_if.arlen+1) inside {1,2,4,8,16,32,64,128}), clk, !rst_n)
+    `CALIPTRA_ASSERT      (ERR_AXI_EX_MAX_LEN,  (s_axi_if.arvalid && s_axi_if.arlock) |-> (s_axi_if.arlen < 16), clk, !rst_n)
 
     genvar sva_ii;
     generate
         if (C_LAT > 0) begin
             for (sva_ii = 0; sva_ii < C_LAT; sva_ii++) begin
                 // Last stage should be first to fill and first to go empty
-                //`CALIPTRA_ASSERT_NEVER(ERR_RD_SKD_BUF_FILL,  $fell(dp_rready[sva_ii+1]) && !dp_rready[sva_ii], clk, !rst_n)
-                //`CALIPTRA_ASSERT_NEVER(ERR_RD_SKD_BUF_DRAIN, $rose(dp_rready[sva_ii+1]) &&  dp_rready[sva_ii], clk, !rst_n)
+                `CALIPTRA_ASSERT_NEVER(ERR_RD_SKD_BUF_FILL,  $fell(dp_rready[sva_ii+1]) && !dp_rready[sva_ii], clk, !rst_n)
+                `CALIPTRA_ASSERT_NEVER(ERR_RD_SKD_BUF_DRAIN, $rose(dp_rready[sva_ii+1]) &&  dp_rready[sva_ii], clk, !rst_n)
             end
         end
     endgenerate

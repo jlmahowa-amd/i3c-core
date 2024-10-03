@@ -285,7 +285,8 @@ module i3c
   logic                          tti_rx_queue_empty;
   logic                          tti_rx_queue_wvalid;
   logic                          tti_rx_queue_wready;
-  logic [    TtiRxDataWidth-1:0] tti_rx_queue_wdata;
+  logic [                   7:0] tti_rx_queue_wdata;
+  logic                          tti_rx_queue_wflush;
 
   // TTI TX queue
   logic                          tti_tx_queue_full;
@@ -296,7 +297,7 @@ module i3c
   logic                          tti_tx_queue_empty;
   logic                          tti_tx_queue_rvalid;
   logic                          tti_tx_queue_rready;
-  logic [    TtiTxDataWidth-1:0] tti_tx_queue_rdata;
+  logic [                   7:0] tti_tx_queue_rdata;
 
   // In-band Interrupt queue
   logic                          tti_ibi_queue_full;
@@ -431,9 +432,16 @@ module i3c
   logic [19:0] t_hd_dat;
   logic [19:0] t_su_dat;
   logic [19:0] t_r;
+  logic [19:0] t_f;
   logic [19:0] t_bus_free;
   logic [19:0] t_bus_idle;
   logic [19:0] t_bus_available;
+
+  logic bus_start;
+  logic bus_stop;
+
+  logic [7:0] rx_bus_addr;
+  logic rx_bus_addr_valid;
 
   controller #(
       .DatAw(DatAw),
@@ -507,6 +515,7 @@ module i3c
       .tti_rx_queue_wvalid_o(tti_rx_queue_wvalid),
       .tti_rx_queue_wready_i(tti_rx_queue_wready),
       .tti_rx_queue_wdata_o(tti_rx_queue_wdata),
+      .tti_rx_queue_wflush_o(tti_rx_queue_wflush),
 
       // TTI: TX Descriptor
       .tti_tx_desc_queue_full_i(tti_tx_desc_queue_full),
@@ -537,6 +546,14 @@ module i3c
       .ibi_queue_wready_i('0),
       .ibi_queue_wdata_o(),
 
+      // I2C/I3C bus condition detection
+      .bus_start_o(bus_start),
+      .bus_stop_o(bus_stop),
+
+       // I2C/I3C received address (with RnW# bit) for the recovery handler
+      .bus_addr_o(rx_bus_addr),
+      .bus_addr_valid_o(rx_bus_addr_valid),
+
       // DAT <-> Controller interface
       .dat_read_valid_hw_o(dat_read_valid_hw),
       .dat_index_hw_o(dat_index_hw),
@@ -566,6 +583,7 @@ module i3c
       .t_su_dat_i(t_su_dat),
       .t_hd_dat_i(t_hd_dat),
       .t_r_i(t_r),
+      .t_f_i(t_f),
       .t_bus_free_i(t_bus_free),
       .t_bus_idle_i(t_bus_idle),
       .t_bus_available_i(t_bus_available)
@@ -705,6 +723,7 @@ module i3c
       .t_su_dat_o(t_su_dat),
       .t_hd_dat_o(t_hd_dat),
       .t_r_o(t_r),
+      .t_f_o(t_f),
       .t_bus_free_o(t_bus_free),
       .t_bus_idle_o(t_bus_idle),
       .t_bus_available_o(t_bus_available)
@@ -904,6 +923,7 @@ module i3c
       .ctl_tti_rx_data_queue_wvalid_i(tti_rx_queue_wvalid),
       .ctl_tti_rx_data_queue_wready_o(tti_rx_queue_wready),
       .ctl_tti_rx_data_queue_wdata_i(tti_rx_queue_wdata),
+      .ctl_tti_rx_data_queue_wflush_i(tti_rx_queue_wflush),
       .ctl_tti_rx_data_queue_start_thld_o(tti_rx_queue_start_thld),
       .ctl_tti_rx_data_queue_start_thld_trig_o(tti_rx_queue_start_thld_trig),
       .ctl_tti_rx_data_queue_ready_thld_o(tti_rx_queue_ready_thld),
@@ -929,7 +949,15 @@ module i3c
       .ctl_tti_ibi_queue_ready_thld_o(tti_ibi_queue_ready_thld),
       .ctl_tti_ibi_queue_ready_thld_trig_o(tti_ibi_queue_ready_thld_trig),
 
-      .irq_o() // TODO: Connect me
+      .irq_o(), // TODO: Connect me
+
+      // I2C/I3C bus condition detection
+      .ctl_bus_start_i(bus_start),
+      .ctl_bus_stop_i(bus_stop),
+
+      // Received I2C/I3C address along with RnW# bit
+      .ctl_bus_addr_i(rx_bus_addr),
+      .ctl_bus_addr_valid_i(rx_bus_addr_valid)
   );
 
   // I3C PHY

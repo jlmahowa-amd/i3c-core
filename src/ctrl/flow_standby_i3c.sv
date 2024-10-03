@@ -14,8 +14,8 @@ module flow_standby_i3c
   import controller_pkg::*;
   import i3c_pkg::*;
 #(
-    parameter int unsigned RxDataWidth = 32,
-    parameter int unsigned TxDataWidth = 32
+    parameter int unsigned RxDataWidth = 8,
+    parameter int unsigned TxDataWidth = 8
 ) (
     input logic clk_i,
     input logic rst_ni,
@@ -28,6 +28,7 @@ module flow_standby_i3c
     output logic rx_queue_wvalid_o,
     input logic rx_queue_wready_i,
     output logic [RxDataWidth-1:0] rx_queue_wdata_o,
+    output logic rx_queue_wflush_o,
 
     // TX queue
     input logic tx_queue_full_i,
@@ -175,5 +176,6 @@ module flow_standby_i3c
     end
   end
 
+  assign rx_queue_wflush_o = transfer_stop_i;
 
 endmodule
