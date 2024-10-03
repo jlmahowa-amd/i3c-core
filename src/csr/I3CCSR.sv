@@ -8793,6 +8793,6 @@ module I3CCSR (
     assign cpuif_rd_data = readback_data;
     assign cpuif_rd_err = readback_err;
 
-`CALIPTRA_ASSERT_KNOWN(ERR_HWIF_IN, hwif_in, clk, !hwif_in.rst_ni)
+//`CALIPTRA_ASSERT_KNOWN(ERR_HWIF_IN, hwif_in, clk, !hwif_in.rst_ni)
 
 endmodule

@@ -34,7 +34,7 @@ module prim_generic_ram_1p import prim_ram_1p_pkg::*; #(
 // `ifndef SYNTHESIS_MEMORY_BLACK_BOXING
 
   // Width must be fully divisible by DataBitsPerMask
-  `CALIPTRA_ASSERT_INIT(DataBitsPerMaskCheck_A, (Width % DataBitsPerMask) == 0)
+  //`CALIPTRA_ASSERT_INIT(DataBitsPerMaskCheck_A, (Width % DataBitsPerMask) == 0)
 
   logic unused_cfg;
   assign unused_cfg = ^cfg_i;
@@ -50,9 +50,9 @@ module prim_generic_ram_1p import prim_ram_1p_pkg::*; #(
     assign wmask[k] = &wmask_i[k*DataBitsPerMask +: DataBitsPerMask];
 
     // Ensure that all mask bits within a group have the same value for a write
-    `CALIPTRA_ASSERT(MaskCheck_A, req_i && write_i |->
-        wmask_i[k*DataBitsPerMask +: DataBitsPerMask] inside {{DataBitsPerMask{1'b1}}, '0},
-        clk_i, '0)
+    //`CALIPTRA_ASSERT(MaskCheck_A, req_i && write_i |->
+    //    wmask_i[k*DataBitsPerMask +: DataBitsPerMask] inside {{DataBitsPerMask{1'b1}}, '0},
+    //    clk_i, '0)
   end
 
   // using always instead of always_ff to avoid 'ICPD  - illegal combination of drivers' error

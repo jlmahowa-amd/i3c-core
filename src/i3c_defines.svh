@@ -13,7 +13,8 @@
 `define IBI_FIFO_EXT_SIZE 0
 `define DAT_DEPTH 128
 `define DCT_DEPTH 128
-`define I3C_USE_AHB 1
+//`define I3C_USE_AHB 1
+`define I3C_USE_AXI 1
 `define AHB_ADDR_WIDTH 12
 `define AHB_DATA_WIDTH 64
 

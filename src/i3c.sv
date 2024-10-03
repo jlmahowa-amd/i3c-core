@@ -22,6 +22,7 @@
     and instantiated in the appropriate i3c_wrapper.
 */
 module i3c
+  import I3CCSR_pkg::*;
   import i3c_pkg::*;
   import controller_pkg::*;
 #(

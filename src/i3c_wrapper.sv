@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 `include "i3c_defines.svh"
 
+import I3CCSR_pkg::*;
+
 module i3c_wrapper #(
-`ifdef I3C_USE_AHB
-    parameter int unsigned AhbDataWidth = `AHB_DATA_WIDTH,
-    parameter int unsigned AhbAddrWidth = `AHB_ADDR_WIDTH,
-`elsif I3C_USE_AXI
+//`ifdef I3C_USE_AHB
+//    parameter int unsigned AhbDataWidth = `AHB_DATA_WIDTH,
+//    parameter int unsigned AhbAddrWidth = `AHB_ADDR_WIDTH,
+//`elsif I3C_USE_AXI
     parameter int unsigned AxiDataWidth = `AXI_DATA_WIDTH,
     parameter int unsigned AxiAddrWidth = `AXI_ADDR_WIDTH,
     parameter int unsigned AxiUserWidth = `AXI_USER_WIDTH,
     parameter int unsigned AxiIdWidth = `AXI_ID_WIDTH,
-`endif
+//`endif
     parameter int unsigned DatAw = i3c_pkg::DatAw,
     parameter int unsigned DctAw = i3c_pkg::DctAw,
 
@@ -115,8 +117,8 @@ module i3c_wrapper #(
         param_name, received, expected); \
       $info("Overriding %s to %0d.", param_name, expected); \
     `else \
-      $fatal(0, "%s: %0d doesn't match the I3C config: %0d (instance %m).", \
-      param_name, received, expected); \
+      $fatal(0, "%s: %0d doesn't match the I3C config: %0d (instance %m).\nAxiDataWidth: %0d AXI_DATA_WIDTH: %0d", \
+      param_name, received, expected, AxiDataWidth, `AXI_DATA_WIDTH); \
     `endif
 
   // Check widths match the I3C configuration
