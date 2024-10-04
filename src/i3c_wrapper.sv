@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 `include "i3c_defines.svh"
 
-import I3CCSR_pkg::*;
 
-module i3c_wrapper #(
+module i3c_wrapper
+  import I3CCSR_pkg::*;
+#(
 `ifdef I3C_USE_AHB
     parameter int unsigned AhbDataWidth = `AHB_DATA_WIDTH,
     parameter int unsigned AhbAddrWidth = `AHB_ADDR_WIDTH,
@@ -16,8 +17,8 @@ module i3c_wrapper #(
     parameter int unsigned DatAw = i3c_pkg::DatAw,
     parameter int unsigned DctAw = i3c_pkg::DctAw,
 
-    parameter int unsigned CsrAddrWidth = I3CCSR_pkg::I3CCSR_MIN_ADDR_WIDTH,
-    parameter int unsigned CsrDataWidth = I3CCSR_pkg::I3CCSR_DATA_WIDTH
+    parameter int unsigned CsrAddrWidth = 12,
+    parameter int unsigned CsrDataWidth = 32
 ) (
     input clk_i,  // clock
     input rst_ni, // active low reset

@@ -38,8 +38,8 @@ module i3c
     parameter int unsigned DatAw = i3c_pkg::DatAw,
     parameter int unsigned DctAw = i3c_pkg::DctAw,
 
-    parameter int unsigned CsrAddrWidth = I3CCSR_pkg::I3CCSR_MIN_ADDR_WIDTH,
-    parameter int unsigned CsrDataWidth = I3CCSR_pkg::I3CCSR_DATA_WIDTH,
+    parameter int unsigned CsrAddrWidth = 12,
+    parameter int unsigned CsrDataWidth = 32,
 
     parameter int unsigned HciRespFifoDepth = `RESP_FIFO_DEPTH,
     parameter int unsigned HciCmdFifoDepth = `CMD_FIFO_DEPTH,
