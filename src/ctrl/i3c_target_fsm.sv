@@ -66,16 +66,26 @@ module i3c_target_fsm
 
     output logic target_idle_o,  // indicates the target is idle
     output logic target_transmitting_o,  // Target is transmitting SDA (disambiguates high sda_o)
+    output logic bus_rstart_det_o,
 
     // TX FIFO used for Target Read
-    input                          tx_fifo_rvalid_i,  // indicates there is valid data in tx_fifo
+    input  logic                   tx_fifo_rvalid_i,  // indicates there is valid data in tx_fifo
     output logic                   tx_fifo_rready_o,  // pop entry from tx_fifo
-    input        [TxFifoWidth-1:0] tx_fifo_rdata_i,   // byte in tx_fifo to be sent to host
+    input  logic [TxFifoWidth-1:0] tx_fifo_rdata_i,   // byte in tx_fifo to be sent to host
+    output logic                   tx_host_nack_o,    // a NACK has been received during transmission
 
     // RX FIFO used for Target Write
     output logic                   rx_fifo_wvalid_o,  // high if there is valid data in rx_fifo
     output logic [RxFifoWidth-1:0] rx_fifo_wdata_o,   // data to write to rx_fifo from target
     input  logic                   rx_fifo_wready_i,
+
+    // IBI FIFO
+    input  logic                    ibi_fifo_rvalid_i,
+    output logic                    ibi_fifo_rready_o,
+    input  logic [IbiFifoWidth-1:0] ibi_fifo_rdata_i,
+
+    // IBI address
+    input logic [6:0] ibi_address_i,
 
     output logic [ 1:0] transfer_type_o,  // 00 - Write, 01- Read, 10 - CCC
     // TODO: Revisit widths of the timings; each timing is configured via 20-bit CSR field
@@ -101,7 +111,11 @@ module i3c_target_fsm
     output logic event_unexp_stop_o,  // target received an unexpected stop
     output logic event_tx_arbitration_lost_o,  // Arbitration was lost during a read transfer
     output logic event_tx_bus_timeout_o,  // Bus timed out during a read transfer
-    output logic event_read_cmd_received_o  // A read awaits confirmation for TX FIFO release
+    output logic event_read_cmd_received_o,  // A read awaits confirmation for TX FIFO release
+
+    output logic [7:0] rst_action_o,
+    output logic       is_in_hdr_mode_o,
+    input  logic       hdr_exit_detect_i
 );
 
   // I2C bus clock timing variables
@@ -115,6 +129,7 @@ module i3c_target_fsm
   // Other internal variables
   logic        scl_d;  // scl internal
   logic sda_d, sda_q;  // data internal
+  logic sda_r;
   logic sda_i_q;  // sda_i delayed by one clock
   logic scl_i_q;  // scl_i delayed by one clock
 
@@ -138,9 +153,35 @@ module i3c_target_fsm
   logic       bit_ack;  // indicates ACK bit been sent or received
   logic       rw_bit;  // indicates host wants to read (1) or write (0)
   logic       host_ack;  // indicates host acknowledged transmitted byte
+  logic       host_tbit_ok; // indicates that T bit matches the expected (odd) parity
+
+  logic [7:0] command_code; // CCC byte
+  logic       command_code_valid;
+
+  logic [7:0] defining_byte; // optional defining byte of the CCC code
+  logic       defining_byte_valid;
+
+  logic       enter_hdr_ccc;
+  logic       enter_hdr_after_stop;
+  logic       enter_hdr_after_stop_clr;
+
+  logic [1:0] command_min_bytes; // minimum number of bytes expected after a CCC read/write
+  logic [1:0] command_max_bytes; // maximum number of bytes expected after a CCC read/write
+
+  logic tbit_after_byte_q;  // whether to expect a T bit after acquiring data byte (we're doing i3c
+                            // flow) or old-style ACK (we're doing i2c) flow. Whether the flow is
+                            // i2c or i3c depends on the target address - if a dynamic address matches
+                            // then it's i3c, if a static address matches then it's i2c, if the address
+                            // is a reserved byte it's i3c with the caveat that this might get overriden
+                            // by a later address read
+  logic tbit_after_byte_d;
 
   // TODO: Set transfer type based on the discovered state
   assign transfer_type_o = 0;
+
+  // IBI
+  logic ibi_handling;  // Asserted when an IBI is transmitter
+  logic ibi_payload;  // Asserted when data from IBI queue is transmitter
 
   // Clock counter implementation
   typedef enum logic [1:0] {
@@ -150,6 +191,33 @@ module i3c_target_fsm
   } tcount_sel_e;
 
   tcount_sel_e tcount_sel;
+
+  ccc ccc(
+    .clk_i(clk_i),
+    .rst_ni(rst_ni),
+
+    // Latch CCC data
+    .command_code_i(command_code),
+    .command_code_valid_i(command_code_valid),
+
+    .defining_byte_i(defining_byte),
+    .defining_byte_valid_i(defining_byte_valid),
+
+    //TODO: Establish correct size
+    .command_data_i(0),
+    .command_data_valid_i(0),
+
+    .queue_size_reg_i(0),
+    .response_byte_o(),
+    .response_valid_o(),
+
+    .enter_hdr_ccc_o(enter_hdr_ccc),
+
+    .rst_action_o(rst_action_o),
+
+    .command_min_bytes_o(command_min_bytes),
+    .command_max_bytes_o(command_max_bytes)
+  );
 
   always_comb begin : counter_functions
     tcount_d = tcount_q;
@@ -204,6 +272,14 @@ module i3c_target_fsm
     end
   end
 
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      tbit_after_byte_q <= 1'b0;
+    end else begin
+      tbit_after_byte_q <= tbit_after_byte_d;
+    end
+  end
+
   // Bit counter on the target side
   assign bit_ack = (bit_idx == 4'd8);  // ack
 
@@ -224,6 +300,7 @@ module i3c_target_fsm
       bit_idx <= 4'd0;
     end else if (bus_start_det_i) begin
       bit_idx <= 4'd0;
+      // FIXME: This is incorrect, the FSM should wait a hold time before changing SDA.
     end else if (scl_negedge) begin
       // input byte clear is always asserted on a "start"
       // condition.
@@ -266,26 +343,26 @@ module i3c_target_fsm
   always_ff @(posedge clk_i or negedge rst_ni) begin : host_ack_register
     if (!rst_ni) begin
       host_ack <= 1'b0;
+      host_tbit_ok <= 1'b0;
     end else if (scl_posedge) begin
       if (bit_ack) begin
         host_ack <= ~sda_i;
+        // T bit indicates odd parity, i.e. the number of set bits in the whole
+        // 9-bit transfer must be odd or equivalently their XOR must be 1
+        host_tbit_ok <= ^input_byte ^ sda_i;
       end
     end
   end
 
   // Latch received bus address
   always_ff @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni)
-      bus_addr <= '0;
-    else if (input_strobe & (bit_idx != 4'd7))
-      bus_addr <= input_byte;
+    if (!rst_ni) bus_addr <= '0;
+    else if (input_strobe & (bit_idx != 4'd7)) bus_addr <= input_byte;
 
   // Latch received RnW bit
   always_ff @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni)
-      bus_rnw <= '0;
-    else if (input_strobe & (bit_idx == 4'd7))
-      bus_rnw <= input_byte[0];
+    if (!rst_ni) bus_rnw <= '0;
+    else if (input_strobe & (bit_idx == 4'd7)) bus_rnw <= input_byte[0];
 
   // An artificial acq_fifo_wready is used here to ensure we always have
   // space to asborb a stop / repeat start format byte.  Without guaranteeing
@@ -302,49 +379,76 @@ module i3c_target_fsm
 
   // State definitions
   // TODO: Controller side stretching handler
-  typedef enum logic [5:0] {
-    Idle = 5'd0,
+  typedef enum logic [6:0] {
+    Idle = 'd0,
     // Target function receives start and address from external host
     AcquireStart = 5'd1,
-    AddrRead = 5'd2,
+    AddrRead = 'd2,
     // Target function acknowledges the address and returns an ack to external host
-    AddrAckWait = 5'd3,
-    AddrAckSetup = 5'd4,
-    AddrAckPulse = 5'd5,
-    AddrAckHold = 5'd6,
+    AddrAckWait = 'd3,
+    AddrAckSetup = 'd4,
+    AddrAckPulse = 'd5,
+    AddrAckHold = 'd6,
     // TODO: Tbit
     //  TbitWait, TbitSetup, TbitPulse, TbitHold
     // Target function sends read data to external host-receiver
-    TransmitWait = 5'd7,
-    TransmitSetup = 5'd8,
-    TransmitPulse = 5'd9,
-    TransmitHold = 5'd10,
+    TransmitWait = 'd7,
+    TransmitSetup = 'd8,
+    TransmitPulse = 'd9,
+    TransmitHold = 'd10,
     // Target function receives ack from external host
-    TransmitAck = 5'd11,
-    TransmitAckPulse = 5'd12,
-    WaitForStop = 5'd13,
+    TransmitTbit = 'd11,
+    TransmitTbitPulse = 'd12,
+    WaitForStop = 'd13,
     // Target function receives write data from the external host
-    AcquireByte = 5'd14,
+    AcquireByte = 'd14,
     // Target function sends ack to external host
-    AcquireAckWait = 5'd15,
-    AcquireAckSetup = 5'd16,
-    AcquireAckPulse = 5'd17,
-    AcquireAckHold = 5'd18,
+    AcquireAckWait = 'd15,
+    AcquireAckSetup = 'd16,
+    AcquireAckPulse = 'd17,
+    AcquireAckHold = 'd18,
 
     // If in AddrRead we read I3C Reserved Byte, we go to ACK here
-    RsvdByteAckWait  = 5'd19,
-    RsvdByteAckSetup = 5'd20,
-    RsvdByteAckPulse = 5'd21,
-    RsvdByteAckHold  = 5'd22,
+    RsvdByteAckWait  = 'd19,
+    RsvdByteAckSetup = 'd20,
+    RsvdByteAckPulse = 'd21,
+    RsvdByteAckHold  = 'd22,
 
     // Do we get SR or CCC next?
-    // This state is only reached from RsvdByte* (may become obsolete with T-bits)
-    PostAckSymbolDetect = 5'd23,
-    PostAckSymbolDetect2 = 5'd24,
-    PostAckSymbolDetect3 = 5'd25,
+    PostAckTBitSymbolDetect = 'd23,
+    PostAckTBitSymbolDetect2 = 'd24,
+    PostAckTBitSymbolDetect3 = 'd25,
     // Read the CCC byte
-    CCCRead = 5'd26,
-    AcquireRStart = 5'd27
+    CCCRead = 'd26,
+    AcquireRStart = 'd27,
+    AcquireTBitWait = 'd28,
+    AcquireTBitSetup = 'd29,
+    AcquireTBitPulse = 'd30,
+    AcquireTBitHold = 'd31,
+    IdleHDR = 'd32,
+
+    // IBI start
+    AcquireIbiStart = 'd33,
+    // IBI address transmission
+    IbiAddrWait = 'd34,
+    IbiAddrSetup = 'd35,
+    IbiAddrPulse = 'd36,
+    IbiAddrHold = 'd37,
+    // IBI address ACK reception
+    IbiAckWait = 'd38,
+    IbiAckSetup = 'd39,
+    IbiAckLatch = 'd40,
+    IbiAckHold = 'd41,
+    // IBI payload transmission
+    IbiTransmitWait = 'd42,
+    IbiTransmitSetup = 'd43,
+    IbiTransmitPulse = 'd44,
+    IbiTransmitHold = 'd45,
+    // IBI T-bit transmission
+    IbiTbitWait = 'd46,
+    IbiTbitSetup = 'd47,
+    IbiTbitPulse = 'd48,
+    IbiTbitHold = 'd49
   } state_e;
 
   state_e state_q, state_d;
@@ -360,9 +464,17 @@ module i3c_target_fsm
     end
   end
 
-  // Reverse the bit order since data should be sent out MSB first
-  logic [TxFifoWidth-1:0] tx_fifo_rdata;
-  assign tx_fifo_rdata = {<<1{tx_fifo_rdata_i}};
+  // Target transmitt data
+  logic [7:0] output_byte;
+
+  always_comb begin
+    if (ibi_handling)
+      if (ibi_payload) output_byte = ibi_fifo_rdata_i;
+      else output_byte = {ibi_address_i, 1'b1};
+    else begin
+      output_byte = tx_fifo_rdata_i;
+    end
+  end
 
   // The usage of target_idle_o directly confuses xcelium and leads the
   // the simulator to a combinational loop. While it may be a tool recognized
@@ -384,10 +496,20 @@ module i3c_target_fsm
   state_e post_ack_decision_q;  // Latch _d
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : proc_latch_ack_decision
-    if (~rst_ni) begin
+    if (!rst_ni) begin
       post_ack_decision_q <= Idle;
     end else begin
       post_ack_decision_q <= post_ack_decision_d;
+    end
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin : proc_latch_enter_hdr
+    if (!rst_ni) begin
+      enter_hdr_after_stop <= 1'b0;
+    end else if (enter_hdr_after_stop_clr) begin
+      enter_hdr_after_stop <= 1'b0;
+    end else if (enter_hdr_ccc) begin
+      enter_hdr_after_stop <= 1'b1;
     end
   end
 
@@ -411,6 +533,8 @@ module i3c_target_fsm
     event_tx_arbitration_lost_o = 1'b0;
     event_tx_bus_timeout_o = 1'b0;
     event_read_cmd_received_o = 1'b0;
+    ibi_fifo_rready_o = 1'b0;
+    tx_host_nack_o = 1'b0;
 
     unique case (state_q)
       // Idle: initial state, SDA is released (high), SCL is released if the
@@ -422,6 +546,83 @@ module i3c_target_fsm
         xact_for_us_d = 1'b0;
         xfer_for_us_d = 1'b0;
         nack_transaction_d = 1'b0;
+
+        // There's an IBI pending in the queue. Pull SDA low and wait for
+        // the controller to begin clocking SCL
+        if (ibi_fifo_rvalid_i) begin
+          sda_d = 1'b0;
+          target_transmitting_o = 1'b1;
+        end
+      end
+      // AcquireIbiStart:
+      AcquireIbiStart: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = 1'b0;
+      end
+
+      IbiAddrWait: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiAddrSetup: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiAddrPulse: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiAddrHold: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+
+      IbiTransmitWait: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiTransmitSetup: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiTransmitPulse: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiTransmitHold: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+
+      IbiTbitWait: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiTbitSetup: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+        if (tcount_q == 20'd1) ibi_fifo_rready_o = 1'b1;
+      end
+      IbiTbitPulse: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      IbiTbitHold: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
       end
 
       // AcquireStart: hold for the end of the start condition
@@ -491,7 +692,7 @@ module i3c_target_fsm
       // TransmitSetup: target shifts indexed bit onto SDA while SCL is low
       TransmitSetup: begin
         target_idle_o = 1'b0;
-        sda_d = tx_fifo_rdata[3'(bit_idx)];
+        sda_d = tx_fifo_rdata_i[3'(7-bit_idx)];
         target_transmitting_o = 1'b1;
       end
       // TransmitPulse: target holds indexed bit onto SDA while SCL is released
@@ -509,17 +710,20 @@ module i3c_target_fsm
         // Hold value
         sda_d = sda_q;
         target_transmitting_o = 1'b1;
-      end
-      // TransmitAck: target waits for host to ACK transmission
-      TransmitAck: begin
-        target_idle_o = 1'b0;
-      end
-      TransmitAckPulse: begin
-        target_idle_o = 1'b0;
-        if (!scl_i) begin
-          // Pop Fifo regardless of ack/nack
+
+        // Pop FIFO
+        if (tcount_q == 20'd1 && bit_ack)
           tx_fifo_rready_o = 1'b1;
-        end
+      end
+      // TransmitTbit: target waits for host to ACK transmission
+      TransmitTbit: begin
+        target_transmitting_o = 1'b1;
+        target_idle_o = 1'b0;
+        sda_d = tx_fifo_rvalid_i; // Set T bit if there's more data in TX fifo
+      end
+      TransmitTbitPulse: begin
+        target_transmitting_o = 1'b1;
+        target_idle_o = 1'b0;
       end
       // WaitForStop just waiting for host to trigger a stop after nack
       WaitForStop: begin
@@ -568,6 +772,56 @@ module i3c_target_fsm
         xfer_for_us_d = 1'b0;
       end
 
+      // RsvdByteAckWait: pause before acknowledging
+      RsvdByteAckWait: begin
+        target_idle_o = 1'b0;
+        if (scl_i) begin
+          // The controller is going too fast. Abandon the transaction.
+          // Nothing is recorded for this case.
+          nack_transaction_d = 1'b1;
+        end
+      end
+      // RsvdByteAckSetup: target pulls SDA low while SCL is low
+      RsvdByteAckSetup: begin
+        target_idle_o = 1'b0;
+        sda_d = 1'b0;
+        target_transmitting_o = 1'b1;
+      end
+      // RsvdByteAckPulse: target pulls SDA low while SCL is released
+      RsvdByteAckPulse: begin
+        target_idle_o = 1'b0;
+        sda_d = 1'b0;
+        target_transmitting_o = 1'b1;
+      end
+      // RsvdByteAckHold: target pulls SDA low while SCL is pulled low
+      RsvdByteAckHold: begin
+        target_idle_o = 1'b0;
+        sda_d = 1'b0;
+        target_transmitting_o = 1'b1;
+      end
+
+      CCCRead: begin
+        target_idle_o = 1'b1;
+        if (bit_ack) begin
+          command_code_valid = 1'b1;
+          command_code = input_byte;
+        end
+      end
+
+      AcquireTBitHold: begin
+        target_idle_o = 1'b0;
+        sda_d = 1'b0;
+        target_transmitting_o = 1'b1;
+        if (host_tbit_ok) begin
+          rx_fifo_wvalid_o = '1;
+          rx_fifo_wdata_o  = input_byte;  // transfer data to rx_fifo
+        end
+      end
+
+      IdleHDR: begin
+        is_in_hdr_mode_o = 1'b1;
+      end
+
       // default
       default: begin
         target_idle_o = 1'b1;
@@ -580,6 +834,7 @@ module i3c_target_fsm
         event_cmd_complete_o = 1'b0;
         xact_for_us_d = 1'b0;
         nack_transaction_d = 1'b0;
+        is_in_hdr_mode_o = 1'b0;
       end
     endcase  // unique case (state_q)
 
@@ -607,6 +862,24 @@ module i3c_target_fsm
   end
   // verilator lint_on LATCH
 
+  always_ff @(posedge clk_i or negedge rst_ni)
+    if (!rst_ni) ibi_handling <= '0;
+    else if (state_q == Idle) ibi_handling <= ibi_fifo_rvalid_i;
+
+  always_ff @(posedge clk_i or negedge rst_ni)
+    if (!rst_ni) ibi_payload <= '0;
+    else if (state_q == Idle) ibi_payload <= '0;
+    else if (state_q == IbiTransmitWait) ibi_payload <= 1'b1;
+    else if (state_q == IbiTbitWait) ibi_payload <= 1'b1;
+
+  always_ff @(posedge clk_i or negedge rst_ni)
+    if (!rst_ni) sda_r <= 1'b1;
+    else if (state_q == IbiAddrSetup || state_q == IbiTransmitSetup)
+      sda_r <= output_byte[3'(7-bit_idx)];
+    else if (state_q == IbiTbitSetup)
+      // TODO: We are sending T=0 as we currently assume there's only one IBI byte
+      sda_r <= 1'b0;
+
   // Conditional state transition
   // TODO: Fix latch
   // verilator lint_off LATCH
@@ -615,11 +888,27 @@ module i3c_target_fsm
     load_tcount = 1'b0;
     tcount_sel = tNoDelay;
     input_byte_clr = 1'b0;
+    enter_hdr_after_stop_clr = 1'b0;
+    bus_rstart_det_o = 1'b0;
     unique case (state_q)
       // Idle: initial state, SDA and SCL are released (high)
       Idle: begin
+        // We have an IBI pending in the queue. SDA will be pulled low. Wait
+        // for the controller to provide SCL clock.
+        if (ibi_fifo_rvalid_i) state_d = AcquireIbiStart;
         // The bus is idle. Waiting for a Start.
         post_ack_decision_d = Idle;
+        // Initially don't drive the bus using push-pull
+        sel_od_pp_o = 1'b0;
+      end
+      // AcquireIbiStart:
+      AcquireIbiStart: begin
+        if (!scl_i) begin
+          state_d = IbiAddrWait;
+          input_byte_clr = 1'b1;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
       end
       // AcquireStart: hold for the end of the start condition
       AcquireStart: begin
@@ -634,19 +923,43 @@ module i3c_target_fsm
         // bit_ack goes high the cycle after scl_i goes low, after the 8th bit
         // was captured.
         if (bit_ack) begin
-          if (is_any_addr_match) begin  // Static, Dynamic or Reserved
-            // We can follow old flow
-            state_d = AddrAckWait;
-            // Wait for hold time to avoid interfering with the controller.
+          if (is_any_addr_match) begin
             load_tcount = 1'b1;
+            // Wait for hold time to avoid interfering with the controller.
             tcount_sel = tHoldData;
+            // TODO: Check that dynamic address really takes precedence
+            // over static address in determining communication flow (I2C/I3C)
+            //
+            // Specification doesn't exactly mention which address takes
+            // precedence in a situation where the dynamic and static address
+            // are the same - this can happen as there's even a dedicated CCC
+            // for setting the dynamic address to be the same as the static
+            // address. This is important for determining whether or not to
+            // expect ACKs or T-bits after a byte is transmitted. Since there
+            // are communication flow variants where the transfer starts/doesn't
+            // start with a reserved byte for both I2C and I3C so the type of
+            // communication (I2C/I3C) is decided based on the type of address
+            // that matched.
+            // We assume here that dynamic address takes precedence over the
+            // static address since sections 5.1.2 and 5.1.2.1.1 hint at this
+            // interpretation but it's not explicitly written anywhere
+            if (is_dyn_addr_match) begin
+              state_d = AddrAckWait;
+              tbit_after_byte_d = 1'b1;
+            end else if (is_sta_addr_match) begin
+              state_d = AddrAckWait;
+              tbit_after_byte_d = 1'b0;
+            end else if (is_i3c_rsvd_addr_match) begin
+              state_d = RsvdByteAckWait;
+              // usually whether or not T bit will appear insetad of ACK
+              // after reading/writing data will depend on later address read
+              // since this time we've just read reserved address - except for
+              // CCCs which always expect T bits so we set it here for this purpose
+              tbit_after_byte_d = 1'b1;
+            end
           end else begin  // no matching address
             // This means this transfer is not meant for us.
             state_d = WaitForStop;
-          end
-          // After ACK we go to:
-          if (is_i3c_rsvd_addr_match) begin
-            post_ack_decision_d = PostAckSymbolDetect;
           end
         end
       end
@@ -693,8 +1006,6 @@ module i3c_target_fsm
             // best for software to ensure there is always space in the ACQ
             // FIFO.
             state_d = WaitForStop;
-          end else if (post_ack_decision_q == PostAckSymbolDetect) begin
-            state_d = PostAckSymbolDetect;
           end else if (rw_bit_q) begin
             // Not NACKing automatically, not stretching, and it's a read.
             state_d = TransmitWait;
@@ -724,7 +1035,7 @@ module i3c_target_fsm
       TransmitHold: begin
         if (tcount_q == 20'd1) begin
           if (bit_ack) begin
-            state_d = TransmitAck;
+            state_d = TransmitTbit;
           end else begin
             load_tcount = 1'b1;
             tcount_sel = tHoldData;
@@ -733,36 +1044,159 @@ module i3c_target_fsm
         end
       end
       // Wait for clock to become positive.
-      TransmitAck: begin
+      TransmitTbit: begin
         if (scl_i) begin
-          state_d = TransmitAckPulse;
+          state_d = TransmitTbitPulse;
         end
       end
-      // TransmitAckPulse: target waits for host to ACK transmission
-      // If a nak is received, that means a stop is incoming.
-      TransmitAckPulse: begin
+      // TransmitTbitPulse
+      TransmitTbitPulse: begin
         if (!scl_i) begin
-          // If host acknowledged, that means we must continue
-          if (host_ack) begin
+          // We have data, continue
+          // FIXME: The decision where to go from here should be actually made
+          // in TransmitTbit
+          if (tx_fifo_rvalid_i) begin
             state_d = TransmitWait;
           end else begin
-            // If host nak'd then the transaction is about to terminate, go to a wait state
             state_d = WaitForStop;
           end
         end
       end
+
+      // IBI address
+      IbiAddrWait: begin
+        if (!scl_i) begin
+          state_d = IbiAddrSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
+      end
+      IbiAddrSetup: begin
+        if (tcount_q == 20'd1) begin
+          state_d = IbiAddrPulse;
+        end
+      end
+      IbiAddrPulse: begin
+        if (scl_i) begin
+          state_d = IbiAddrHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      IbiAddrHold: begin
+        if (tcount_q == 20'd1) begin
+          if (bit_idx == 7) state_d = IbiAckWait;
+          else state_d = IbiAddrWait;
+          load_tcount = 1'b1;
+          tcount_sel  = tSetupData;
+        end
+      end
+
+      // IBI address ACK
+      IbiAckWait: begin
+        if (!scl_i) begin
+          state_d = IbiAckSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
+      end
+      IbiAckSetup: begin
+        if (tcount_q == 20'd1) state_d = IbiAckLatch;
+      end
+      IbiAckLatch: begin
+        if (scl_i) begin
+          if (sda_i) post_ack_decision_d = WaitForStop;  // NACK
+          else post_ack_decision_d = IbiTransmitWait;  // ACK
+          state_d = IbiAckHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      IbiAckHold: begin
+        if (tcount_q == 20'd1) begin
+          state_d = post_ack_decision_d;
+        end
+      end
+
+      // IBI payload
+      IbiTransmitWait: begin
+        sel_od_pp_o = 1'b1;
+        if (!scl_i) begin
+          state_d = IbiTransmitSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
+      end
+      IbiTransmitSetup: begin
+        if (tcount_q == 20'd1) begin
+          state_d = IbiTransmitPulse;
+        end
+      end
+      IbiTransmitPulse: begin
+        if (scl_i) begin
+          state_d = IbiTransmitHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      IbiTransmitHold: begin
+        if (tcount_q == 20'd1) begin
+          if (bit_idx == 7) state_d = IbiTbitWait;
+          else state_d = IbiTransmitWait;
+          load_tcount = 1'b1;
+          tcount_sel  = tSetupData;
+        end
+      end
+
+      // IBI payload T-bit
+      IbiTbitWait: begin
+        if (!scl_i) begin
+          state_d = IbiTbitSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
+      end
+      IbiTbitSetup: begin
+        if (tcount_q == 20'd1) begin
+          state_d = IbiTbitPulse;
+        end
+      end
+      IbiTbitPulse: begin
+        if (scl_i) begin
+          state_d = IbiTbitHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      IbiTbitHold: begin
+        if (tcount_q == 20'd1) begin
+          // TODO: Currently we assume that there's no more than one byte of IBI payload
+          state_d = WaitForStop;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+          sel_od_pp_o = 1'b0;  // Release the bus
+        end
+      end
+
       // An inert state just waiting for host to issue a stop
       // Cannot cycle back to idle directly as other events depend on the system being
       // non-idle.
       WaitForStop: begin
+        sel_od_pp_o = 1'b0;
         state_d = WaitForStop;
       end
       // AcquireByte: target acquires a byte
       AcquireByte: begin
         if (bit_ack) begin
-          state_d = AcquireAckWait;
           load_tcount = 1'b1;
           tcount_sel = tHoldData;
+          if (tbit_after_byte_q) begin
+            state_d = AcquireTBitWait;
+            defining_byte = input_byte;
+            defining_byte_valid = 1'b1;
+          end else begin
+            state_d = AcquireAckWait;
+          end
         end
       end
       // AcquireAckWait: pause for hold time before acknowledging
@@ -796,30 +1230,35 @@ module i3c_target_fsm
           state_d = AcquireByte;
         end
       end
-      PostAckSymbolDetect: begin
+      PostAckTBitSymbolDetect: begin
         input_byte_clr = '1;  // Clear input byte
-        state_d = PostAckSymbolDetect2;
+        state_d = PostAckTBitSymbolDetect2;
       end
-      PostAckSymbolDetect2: begin
+      PostAckTBitSymbolDetect2: begin
         // TODO: Currently we wait for scl posedge indefinitely, add correct timings and timeout
 
         // When SCL posedge comes, latch SDA
         if (scl_posedge) begin
-          state_d = PostAckSymbolDetect3;
+          state_d = PostAckTBitSymbolDetect3;
         end
       end
-      PostAckSymbolDetect3: begin
+      PostAckTBitSymbolDetect3: begin
         // Check if next transition is on SDA or SCL
         if (scl_posedge || scl_negedge) begin
           // TODO: This assumes a Private Write, add logic for handling Private Read:
           // if ( rnw ) // Transmit* or Acquire*
           // This is next data byte
-          state_d = AcquireByte;
+          state_d = post_ack_decision_q;
         end
         if (sda_posedge) begin
           // This is a STOP
           input_byte_clr = '1;  // Clear input byte
-          state_d = WaitForStop;  // Is this the right state?
+          if (enter_hdr_after_stop) begin
+            state_d = IdleHDR;
+            enter_hdr_after_stop_clr = 1'b1;
+          end else begin
+            state_d = Idle;  // Is this the right state?
+          end
         end
         if (sda_negedge) begin
           // This is a Repeated Start
@@ -827,12 +1266,103 @@ module i3c_target_fsm
           state_d = AcquireRStart;
         end
       end
+      // RsvdByteAckWait: pause for hold time before acknowledging
+      RsvdByteAckWait: begin
+        if (scl_i) begin
+          // The controller is going too fast. Abandon the transaction.
+          state_d = WaitForStop;
+        end else if (tcount_q == 20'd1) begin
+          if (nack_transaction_q) begin
+            state_d = WaitForStop;
+          end else begin
+            state_d = RsvdByteAckSetup;
+          end
+        end
+      end
+      // RsvdByteAckSetup: target pulls SDA low while SCL is low
+      RsvdByteAckSetup: begin
+        if (scl_i) state_d = RsvdByteAckPulse;
+      end
+      // RsvdByteAckPulse: target pulls SDA low while SCL is released
+      RsvdByteAckPulse: begin
+        if (!scl_i) begin
+          state_d = RsvdByteAckHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      // RsvdByteAckHold: target pulls SDA low while SCL is pulled low
+      RsvdByteAckHold: begin
+        if (tcount_q == 20'd1) begin
+          // After this ACK we get either repeated start or CCC,
+          // PostAckTBitSymbolDetect takes care of choosing the correct path
+          state_d = PostAckTBitSymbolDetect;
+          post_ack_decision_d = CCCRead;
+        end
+      end
+
+      CCCRead: begin
+        if (bit_ack) begin
+          state_d = AcquireTBitWait;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+
+      // AcquireTBitWait: pause for hold time before acknowledging
+      AcquireTBitWait: begin
+        if (scl_i) begin
+          // The controller is going too fast. Abandon the transaction.
+          state_d = WaitForStop;
+        end else if (tcount_q == 20'd1) begin
+          if (nack_transaction_q) begin
+            state_d = WaitForStop;
+          end else begin
+            state_d = AcquireTBitSetup;
+          end
+        end
+      end
+
+      AcquireTBitSetup: begin
+        if (scl_i) state_d = AcquireTBitPulse;
+      end
+
+      AcquireTBitPulse: begin
+        if (!scl_i) begin
+          state_d = AcquireTBitHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+
+      AcquireTBitHold: begin
+        // host_tbit_ok will be set because bit_ack went high some time earlier
+        if (host_tbit_ok) begin
+          state_d = PostAckTBitSymbolDetect;
+          // TODO: track how many CCC bytes we've read and still need to read
+          // based on command_min_bytes and command_max_bytes
+          post_ack_decision_d = AcquireByte;
+        end else begin
+          // T bit invalid - is this the correct state?
+          state_d = WaitForStop;
+        end
+
+
+      end
+
+      IdleHDR: begin
+        if (hdr_exit_detect_i) begin
+          state_d = Idle;
+        end
+      end
+
       // AcquireRStart: hold for the end of the Repeated Start condition
       AcquireRStart: begin
         post_ack_decision_d = Idle;
         if (!scl_i) begin
           state_d = AddrRead;
           input_byte_clr = 1'b1;
+          bus_rstart_det_o = 1'b1;
         end
       end
       default: begin
@@ -846,22 +1376,24 @@ module i3c_target_fsm
     // When a start is detected, always go to the acquire start state.
     // Differences in repeated start / start handling are done in the
     // other FSM.
-    if (!target_idle && !target_enable_i) begin
-      // If the target function is currently not idle but target_enable is suddenly dropped,
-      // (maybe because the host locked up and we want to cycle back to an initial state),
-      // transition immediately.
-      // The same treatment is not given to the host mode because it already attempts to
-      // gracefully terminate.  If the host cannot gracefully terminate for whatever reason,
-      // (the other side is holding SCL low), we may need to forcefully reset the module.
-      // ICEBOX(#18004): It may be worth having a force stop condition to force the host back to
-      // Idle in case graceful termination is not possible.
-      state_d = Idle;
-    end else if (target_enable_i && bus_start_det_i) begin
-      state_d = AcquireStart;
-    end else if (bus_stop_detect_i || bus_timeout_i) begin
-      state_d = Idle;
-    end else if (bus_arbitration_lost_i) begin
-      state_d = WaitForStop;
+    if (!is_in_hdr_mode_o) begin
+      if (!target_idle && !target_enable_i) begin
+        // If the target function is currently not idle but target_enable is suddenly dropped,
+        // (maybe because the host locked up and we want to cycle back to an initial state),
+        // transition immediately.
+        // The same treatment is not given to the host mode because it already attempts to
+        // gracefully terminate.  If the host cannot gracefully terminate for whatever reason,
+        // (the other side is holding SCL low), we may need to forcefully reset the module.
+        // ICEBOX(#18004): It may be worth having a force stop condition to force the host back to
+        // Idle in case graceful termination is not possible.
+        state_d = Idle;
+      end else if (target_enable_i && bus_start_det_i && !ibi_handling) begin
+        state_d = AcquireStart;
+      end else if (bus_stop_detect_i || bus_timeout_i) begin
+        state_d = Idle;
+      end else if (bus_arbitration_lost_i) begin
+        state_d = WaitForStop;
+      end
     end
   end
   // verilator lint_on LATCH
@@ -906,9 +1438,6 @@ module i3c_target_fsm
 
   assign scl_o = scl_d;
   assign sda_o = sda_d;
-
-  // TODO: Handle driver switching based on current bit in transmission
-  assign sel_od_pp_o = 1'b0;
 
   // Assertions
   // // Make sure we never attempt to send a single cycle glitch

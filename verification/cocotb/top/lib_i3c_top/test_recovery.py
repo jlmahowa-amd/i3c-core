@@ -6,8 +6,8 @@ from boot import boot_init
 from bus2csr import dword2int, int2dword
 from cocotbext_i3c.i3c_controller import I3cController
 from cocotbext_i3c.i3c_target import I3CTarget
+from cocotbext_i3c.i3c_recovery_interface import I3cRecoveryInterface
 from interface import I3CTopTestInterface
-from recovery_interface import RecoveryInterface
 
 import cocotb
 from cocotb.triggers import Timer
@@ -50,7 +50,7 @@ async def initialize(dut):
     tb = I3CTopTestInterface(dut)
     await tb.setup()
 
-    recovery = RecoveryInterface(i3c_controller)
+    recovery = I3cRecoveryInterface(i3c_controller)
 
     # Configure the top level
     await boot_init(tb)
@@ -74,8 +74,8 @@ async def test_recovery_write(dut):
     i3c_controller, i3c_target, tb, recovery = await initialize(dut)
 
     # Write to the RESET CSR (one word)
-    await recovery.command(
-        0x5A, RecoveryInterface.Command.DEVICE_RESET, True, [0xAA, 0xBB, 0xCC, 0xDD]
+    await recovery.command_write(
+        0x5A, I3cRecoveryInterface.Command.DEVICE_RESET, [0xAA, 0xBB, 0xCC, 0xDD]
     )
 
     # Wait & read the CSR from the AHB/AXI side
@@ -94,10 +94,9 @@ async def test_recovery_write(dut):
     assert data == 0xDDCCBBAA
 
     # Write to the FIFO_CTRL CSR (two words)
-    await recovery.command(
+    await recovery.command_write(
         0x5A,
-        RecoveryInterface.Command.INDIRECT_FIFO_CTRL,
-        True,
+        I3cRecoveryInterface.Command.INDIRECT_FIFO_CTRL,
         [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44],
     )
 
@@ -134,18 +133,17 @@ async def test_recovery_write_pec(dut):
     i3c_controller, i3c_target, tb, recovery = await initialize(dut)
 
     # Write to the RESET CSR
-    await recovery.command(
-        0x5A, RecoveryInterface.Command.DEVICE_RESET, True, [0xEF, 0xBE, 0xAD, 0xDE]
+    await recovery.command_write(
+        0x5A, I3cRecoveryInterface.Command.DEVICE_RESET, [0xEF, 0xBE, 0xAD, 0xDE]
     )
 
     # Wait, skip checks
     await Timer(1, "us")
 
     # Write to the RESET CSR again, deliberately malform PEC
-    await recovery.command(
+    await recovery.command_write(
         0x5A,
-        RecoveryInterface.Command.DEVICE_RESET,
-        True,
+        I3cRecoveryInterface.Command.DEVICE_RESET,
         [0xBA, 0xBA, 0xFE, 0xCA],
         force_pec_error=True,
     )
@@ -164,3 +162,29 @@ async def test_recovery_write_pec(dut):
     protocol_status = (status >> 8) & 0xFF
     assert protocol_status == 0x04  # PEC error
     assert data == 0xDEADBEEF  # From previous write
+
+
+@cocotb.test()
+async def test_recovery_read(dut):
+    """
+    Tests CSR read(s) using the recovery protocol
+    """
+
+    # Initialize
+    i3c_controller, i3c_target, tb, recovery = await initialize(dut)
+
+    # Write data to PROT_CAP CSR
+    await tb.write_csr(tb.reg_map.I3C_EC.SECFWRECOVERYIF.PROT_CAP_0.base_addr, int2dword(0x04030201), 4)
+    await tb.write_csr(tb.reg_map.I3C_EC.SECFWRECOVERYIF.PROT_CAP_1.base_addr, int2dword(0x08070605), 4)
+    await tb.write_csr(tb.reg_map.I3C_EC.SECFWRECOVERYIF.PROT_CAP_2.base_addr, int2dword(0x0C0B0A09), 4)
+    await tb.write_csr(tb.reg_map.I3C_EC.SECFWRECOVERYIF.PROT_CAP_3.base_addr, int2dword(0xFF0F0E0D), 4)
+
+    # Wait
+    await Timer(1, "us")
+
+    # Read the PROT_CAP register
+    await recovery.command_read(0x5A, I3cRecoveryInterface.Command.PROT_CAP)
+
+    # Wait
+    await Timer(2, "us")
+

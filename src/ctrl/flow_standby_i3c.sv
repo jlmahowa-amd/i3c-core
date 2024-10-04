@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO: Private Read
-// TODO: Private Write
-// TODO: CCC
-// TODO: DAA
-// TODO: BCAST
+/*
+  This module is supposed to operate on I3C Frames, which
+  are stripped of starts, stops, addresses, reserved bytes.
+  For now, it is sufficient to:
+  - receive information if the next byte is R or W or CCC
 
-// This module is supposed to operate on I3C Frames, which
-// are stripped of starts, stops, addresses, reserved bytes.
-// For now, it is sufficient to:
-// - receive information if the next byte is R or W or CCC
+  TODO: Private Read
+  TODO: Private Write
+  TODO: CCC
+  TODO: DAA
+  TODO: BCAST
+*/
 module flow_standby_i3c
   import controller_pkg::*;
   import i3c_pkg::*;
@@ -61,11 +63,6 @@ module flow_standby_i3c
 
   logic [7:0] transfer_rx_byte;
   logic [7:0] transfer_tx_byte;
-
-  // TODO: Drive outputs appropriately
-  always_comb begin
-    tx_queue_rready_o = 1'b0;
-  end
 
   //  FSM
   typedef enum logic [3:0] {
@@ -144,18 +141,10 @@ module flow_standby_i3c
     end
   end
 
-  assign tx_byte_valid_o = tx_byte_ready_i;  // TODO: temporarily always accept transfers
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin : proc_handler_tx
-    if (~rst_ni) begin
-      transfer_tx_byte <= '0;
-    end else begin
-      transfer_tx_byte <= 8'hBC;  // TODO: temporarily hard-coded data path
-      if (tx_byte_valid_o && tx_byte_ready_i) begin
-        tx_byte_o <= transfer_tx_byte;
-      end
-    end
-  end
+  // Pass through TX data from the queue
+  assign tx_byte_o = tx_queue_rdata_i;
+  assign tx_byte_valid_o = tx_queue_rvalid_i;
+  assign tx_queue_rready_o = tx_byte_ready_i;
 
   // Pass data to TTI RX queue
   // TODO: Check for full, handshake

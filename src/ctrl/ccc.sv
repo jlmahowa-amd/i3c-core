@@ -3,6 +3,7 @@
 module ccc
   import controller_pkg::*;
   import i3c_pkg::*;
+  import I3CCSR_pkg::*;
 (
     input logic clk_i,
     input logic rst_ni,
@@ -11,7 +12,7 @@ module ccc
     input logic [7:0] command_code_i,
     input logic command_code_valid_i,
 
-    input logic defining_byte_i,
+    input logic [7:0] defining_byte_i,
     input logic defining_byte_valid_i,
 
     //TODO: Establish correct size
@@ -20,23 +21,37 @@ module ccc
 
     input logic [31:0] queue_size_reg_i,
     output logic response_byte_o,
-    output logic response_valid_o
+    output logic response_valid_o,
 
+    output logic enter_hdr_ccc_o,
+
+    output logic [7:0] rst_action_o,
+
+    // TODO: establish correct sizes
+    output logic [1:0] command_min_bytes_o,
+    output logic [1:0] command_max_bytes_o
 );
 
   // Latch CCC data
   logic [7:0] command_code;
   logic [7:0] defining_byte;
+  logic       defining_byte_valid;
   logic [7:0] command_data;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : proc_latch_inputs
     if (~rst_ni) begin
       command_code  <= '0;
       defining_byte <= '0;
+      defining_byte_valid <= '0;
       command_data  <= '0;
     end else begin
-      command_code  <= command_code_valid_i ? command_code_i : command_code;
+      if (clear_command_code) begin
+        command_code <= '0;
+      end else if (command_code_valid_i) begin
+        command_code <= command_code_i;
+      end
       defining_byte <= defining_byte_valid_i ? defining_byte_i : defining_byte;
+      defining_byte_valid <= defining_byte_valid_i;
       command_data  <= command_data_valid_i ? command_data_i : command_data;
     end
   end
@@ -55,8 +70,17 @@ module ccc
   // Decode CCC
   logic is_direct_cmd = command_code[7];  // 0 - BCast, 1 - Direct
 
+  // CCC handling logic
+  logic clear_command_code;
+
   always_comb begin
     response_valid_o = '0;
+    response_byte_o  = '0;
+    enter_hdr_ccc_o = '0;
+    rst_action_o = '0;
+    command_min_bytes_o = '0;
+    command_max_bytes_o = '0;
+    clear_command_code = '0;
     unique case (command_code)
       // Idle: Wait for command appearance in the Command Queue
       `I3C_DIRECT_GETMRL: begin
@@ -67,11 +91,18 @@ module ccc
         response_byte_o  = tx_data_buffer_size;
         response_valid_o = '1;
       end
-      default: begin
-        response_byte_o  = '0;
-        response_valid_o = '0;
+      `I3C_BCAST_ENTHDR0: begin
+        enter_hdr_ccc_o = '1;
+        clear_command_code = '1;
       end
+      `I3C_DIRECT_RSTACT, `I3C_BCAST_RSTACT: begin
+        command_min_bytes_o = '1;
+        command_max_bytes_o = '1;
+        if (defining_byte_valid) begin
+          rst_action_o = defining_byte;
+        end
+      end
+      default: ;
     endcase
   end
-
 endmodule

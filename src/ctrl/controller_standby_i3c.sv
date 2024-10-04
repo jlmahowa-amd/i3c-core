@@ -6,8 +6,9 @@ module controller_standby_i3c
 #(
     parameter int unsigned TtiRxDescDataWidth = 32,
     parameter int unsigned TtiTxDescDataWidth = 32,
-    parameter int unsigned TtiRxDataWidth = 32,
-    parameter int unsigned TtiTxDataWidth = 32,
+    parameter int unsigned TtiRxDataWidth = 8,
+    parameter int unsigned TtiTxDataWidth = 8,
+    parameter int unsigned TtiIbiDataWidth = 32,
 
     parameter int unsigned TtiRxDescThldWidth = 8,
     parameter int unsigned TtiTxDescThldWidth = 8,
@@ -67,8 +68,16 @@ module controller_standby_i3c
     output logic tx_queue_rready_o,
     input logic [TtiTxDataWidth-1:0] tx_queue_rdata_i,
 
+    // TTI: In-band-interrupt queue
+    input logic ibi_queue_full_i,
+    input logic ibi_queue_empty_i,
+    input logic ibi_queue_rvalid_i,
+    output logic ibi_queue_rready_o,
+    input logic [TtiIbiDataWidth-1:0] ibi_queue_rdata_i,
+
     // Bus condition detection
     output logic bus_start_o,
+    output logic bus_rstart_o,
     output logic bus_stop_o,
 
     // I3C received address (with RnW# bit) for the recovery handler
@@ -88,7 +97,10 @@ module controller_standby_i3c
     input logic [19:0] t_f_i,
     input logic [19:0] t_bus_free_i,
     input logic [19:0] t_bus_idle_i,
-    input logic [19:0] t_bus_available_i
+    input logic [19:0] t_bus_available_i,
+
+    output logic [7:0] rst_action_o,
+    output logic tx_host_nack_o
 );
   // TODO: Set TTI descriptor outputs
   always_comb begin
@@ -175,6 +187,8 @@ module controller_standby_i3c
   assign stby_cr_device_addr_reg   = {1'b1, 8'h00, 7'h5A, 1'b1, 8'h00, 7'h22};
   assign stby_cr_device_char_reg   = '0;
   assign stby_cr_device_pid_lo_reg = '0;
+  // Effective address for IBIs
+  logic [6:0] target_address;
   // end: Target FSM <--> DAA
 
   logic bus_busy;
@@ -195,14 +209,21 @@ module controller_standby_i3c
       .bus_stop_detect_i(stop_detect),
       .bus_arbitration_lost_i(i3c_bus_arbitration_lost_i),
       .bus_timeout_i(i3c_bus_timeout_i),
+      .bus_rstart_det_o(rstart_detect),
       .target_idle_o(i3c_target_idle_o),
       .target_transmitting_o(i3c_target_transmitting_o),
       .tx_fifo_rvalid_i(tx_byte_valid),
       .tx_fifo_rready_o(tx_byte_ready),
       .tx_fifo_rdata_i(tx_byte),
+      .tx_host_nack_o(tx_host_nack_o),
       .rx_fifo_wvalid_o(rx_byte_valid),
       .rx_fifo_wdata_o(rx_byte),
       .rx_fifo_wready_i(rx_byte_ready),
+      .ibi_fifo_rvalid_i(ibi_queue_rvalid_i),
+      .ibi_fifo_rready_o(ibi_queue_rready_o),
+      // FIXME: Here we connect 32-bit data to 8-bit input. This is ok for now as we send MDB byte only.
+      .ibi_fifo_rdata_i(ibi_queue_rdata_i),
+      .ibi_address_i(target_address),
       .transfer_type_o(transfer_type),
       .t_r_i(t_r_i),
       .t_f_i(t_f_i),
@@ -221,7 +242,10 @@ module controller_standby_i3c
       .event_unexp_stop_o(i3c_event_unexp_stop_o),
       .event_tx_arbitration_lost_o(i3c_event_tx_arbitration_lost_o),
       .event_tx_bus_timeout_o(i3c_event_tx_bus_timeout_o),
-      .event_read_cmd_received_o(i3c_event_read_cmd_received_o)
+      .event_read_cmd_received_o(i3c_event_read_cmd_received_o),
+      .rst_action_o(rst_action_o),
+      .is_in_hdr_mode_o(is_in_hdr_mode),
+      .hdr_exit_detect_i(hdr_exit_detect)
   );
 
   bus_monitor xbus_monitor (
@@ -265,12 +289,14 @@ module controller_standby_i3c
       .stby_cr_device_addr_reg(stby_cr_device_addr_reg),
       .stby_cr_device_char_reg(stby_cr_device_char_reg),
       .stby_cr_device_pid_lo_reg(stby_cr_device_pid_lo_reg),
-      .daa_unique_response(daa_unique_response)
+      .daa_unique_response(daa_unique_response),
+      .target_address_o(target_address)
   );
 
   // Expose bus condition detection
   assign bus_start_o = start_detect;
-  assign bus_stop_o  = stop_detect;
+  assign bus_rstart_o = rstart_detect;
+  assign bus_stop_o = stop_detect;
 
   // Expose the received address + RnW bit
   assign bus_addr_o = {bus_addr, bus_rnw};

@@ -126,15 +126,16 @@ module controller
     input logic tti_tx_queue_rvalid_i,
     output logic tti_tx_queue_rready_o,
     input logic [TtiTxDataWidth-1:0] tti_tx_queue_rdata_i,
+    output logic tti_tx_host_nack_o,
 
     // In-band Interrupt queue
     input logic ibi_queue_full_i,
     input logic [HciIbiThldWidth-1:0] ibi_queue_thld_i,
     input logic ibi_queue_above_thld_i,
     input logic ibi_queue_empty_i,
-    output logic ibi_queue_wvalid_o,
-    input logic ibi_queue_wready_i,
-    output logic [HciIbiDataWidth-1:0] ibi_queue_wdata_o,
+    input logic ibi_queue_rvalid_i,
+    output logic ibi_queue_rready_o,
+    input logic [TtiIbiDataWidth-1:0] ibi_queue_rdata_i,
 
     // DAT <-> Controller interface
     output logic             dat_read_valid_hw_o,
@@ -150,6 +151,7 @@ module controller
 
     // I2C/I3C Bus condition detection
     output logic bus_start_o,
+    output logic bus_rstart_o,
     output logic bus_stop_o,
 
     // I2C/I3C received address (with RnW# bit) for the recovery handler
@@ -176,7 +178,9 @@ module controller
     input logic [19:0] t_f_i,
     input logic [19:0] t_bus_free_i,
     input logic [19:0] t_bus_idle_i,
-    input logic [19:0] t_bus_available_i
+    input logic [19:0] t_bus_available_i,
+
+    output logic [7:0] rst_action_o
 );
 
   // 4:1 multiplexer for signals between PHY and controllers.
@@ -236,13 +240,13 @@ module controller
       .resp_queue_wvalid_o(hci_resp_queue_wvalid_o),
       .resp_queue_wready_i(hci_resp_queue_wready_i),
       .resp_queue_wdata_o(hci_resp_queue_wdata_o),
-      .ibi_queue_full_i,
-      .ibi_queue_thld_i,
-      .ibi_queue_above_thld_i,
-      .ibi_queue_empty_i,
-      .ibi_queue_wvalid_o,
-      .ibi_queue_wready_i,
-      .ibi_queue_wdata_o,
+      .ibi_queue_full_i(ibi_queue_full_i),
+      .ibi_queue_thld_i(ibi_queue_thld_i),
+      .ibi_queue_above_thld_i(ibi_queue_above_thld_i),
+      .ibi_queue_empty_i(ibi_queue_empty_i),
+      .ibi_queue_wvalid_o(ibi_queue_wvalid_o),
+      .ibi_queue_wready_i(ibi_queue_wready_i),
+      .ibi_queue_wdata_o(ibi_queue_wdata_o),
       .dat_read_valid_hw_o(dat_read_valid_hw_o),
       .dat_index_hw_o(dat_index_hw_o),
       .dat_rdata_hw_i(dat_rdata_hw_i),
@@ -312,9 +316,15 @@ module controller
       .tx_queue_rready_o(tti_tx_queue_rready_o),
       .tx_queue_rdata_i(tti_tx_queue_rdata_i),
       .bus_start_o(bus_start_o),
+      .bus_rstart_o(bus_rstart_o),
       .bus_stop_o(bus_stop_o),
       .bus_addr_o(bus_addr_o),
       .bus_addr_valid_o(bus_addr_valid_o),
+      .ibi_queue_full_i,
+      .ibi_queue_empty_i,
+      .ibi_queue_rvalid_i,
+      .ibi_queue_rready_o,
+      .ibi_queue_rdata_i,
       .phy_en_i(phy_en_i),
       .phy_mux_select_i(phy_mux_select_i),
       .i2c_active_en_i(i2c_active_en_i),
@@ -327,7 +337,9 @@ module controller
       .t_f_i(t_f_i),
       .t_bus_free_i(t_bus_free_i),
       .t_bus_idle_i(t_bus_idle_i),
-      .t_bus_available_i(t_bus_available_i)
+      .t_bus_available_i(t_bus_available_i),
+      .rst_action_o(rst_action_o),
+      .tx_host_nack_o(tti_tx_host_nack_o)
   );
 
 endmodule

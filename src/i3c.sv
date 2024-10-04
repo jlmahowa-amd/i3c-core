@@ -22,7 +22,6 @@
     and instantiated in the appropriate i3c_wrapper.
 */
 module i3c
-  import I3CCSR_pkg::*;
   import i3c_pkg::*;
   import controller_pkg::*;
 #(
@@ -158,6 +157,7 @@ module i3c
 `endif
 
     // I3C bus IO
+
     // Level of the {scl,sda} pins is equal to the level on the bus.
     // For example, to pull down the bus in OD mode, the {scl,sda} should be set to 0.
     input  logic i3c_scl_i,  // serial clock input from i3c bus
@@ -299,6 +299,8 @@ module i3c
   logic                          tti_tx_queue_rready;
   logic [                   7:0] tti_tx_queue_rdata;
 
+  logic                          tti_tx_host_nack;
+
   // In-band Interrupt queue
   logic                          tti_ibi_queue_full;
   logic [   TtiIbiThldWidth-1:0] tti_ibi_queue_ready_thld;
@@ -438,10 +440,12 @@ module i3c
   logic [19:0] t_bus_available;
 
   logic bus_start;
+  logic bus_rstart;
   logic bus_stop;
 
   logic [7:0] rx_bus_addr;
   logic rx_bus_addr_valid;
+  logic [7:0] rst_action;
 
   controller #(
       .DatAw(DatAw),
@@ -536,18 +540,20 @@ module i3c
       .tti_tx_queue_rvalid_i(tti_tx_queue_rvalid),
       .tti_tx_queue_rready_o(tti_tx_queue_rready),
       .tti_tx_queue_rdata_i(tti_tx_queue_rdata),
+      .tti_tx_host_nack_o(tti_tx_host_nack),
 
-      // TODO: In-band Interrupt queue
-      .ibi_queue_full_i('0),
-      .ibi_queue_thld_i('0),
-      .ibi_queue_above_thld_i('0),
-      .ibi_queue_empty_i('0),
-      .ibi_queue_wvalid_o(),
-      .ibi_queue_wready_i('0),
-      .ibi_queue_wdata_o(),
+      // TTI: In-band Interrupt queue
+      .ibi_queue_full_i(tti_ibi_queue_full),
+      .ibi_queue_thld_i(tti_ibi_queue_ready_thld),
+      .ibi_queue_above_thld_i(tti_ibi_queue_ready_thld_trig),
+      .ibi_queue_empty_i(tti_ibi_queue_empty),
+      .ibi_queue_rvalid_i(tti_ibi_queue_rvalid),
+      .ibi_queue_rready_o(tti_ibi_queue_rready),
+      .ibi_queue_rdata_i(tti_ibi_queue_rdata),
 
       // I2C/I3C bus condition detection
       .bus_start_o(bus_start),
+      .bus_rstart_o(bus_rstart),
       .bus_stop_o(bus_stop),
 
        // I2C/I3C received address (with RnW# bit) for the recovery handler
@@ -569,8 +575,8 @@ module i3c
       // TODO: TTI interface
 
       //TODO: Rename
-      .i3c_fsm_en_i,
-      .i3c_fsm_idle_o,
+      .i3c_fsm_en_i(i3c_fsm_en_i),
+      .i3c_fsm_idle_o(i3c_fsm_idle_o),
 
       .err(),  // TODO: Handle errors
       .irq(),  // TODO: Handle interrupts
@@ -586,7 +592,9 @@ module i3c
       .t_f_i(t_f),
       .t_bus_free_i(t_bus_free),
       .t_bus_idle_i(t_bus_idle),
-      .t_bus_available_i(t_bus_available)
+      .t_bus_available_i(t_bus_available),
+
+      .rst_action_o(rst_action)
   );
 
   // HCI
@@ -629,20 +637,20 @@ module i3c
       .TtiRxThldWidth(TtiRxThldWidth),
       .TtiTxThldWidth(TtiTxThldWidth)
   ) xhci (
-      .clk_i,
-      .rst_ni,
-      .s_cpuif_req,
-      .s_cpuif_req_is_wr,
-      .s_cpuif_addr,
-      .s_cpuif_wr_data,
-      .s_cpuif_wr_biten,
-      .s_cpuif_req_stall_wr,
-      .s_cpuif_req_stall_rd,
-      .s_cpuif_rd_ack,
-      .s_cpuif_rd_err,
-      .s_cpuif_rd_data,
-      .s_cpuif_wr_ack,
-      .s_cpuif_wr_err,
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .s_cpuif_req(s_cpuif_req),
+      .s_cpuif_req_is_wr(s_cpuif_req_is_wr),
+      .s_cpuif_addr(s_cpuif_addr),
+      .s_cpuif_wr_data(s_cpuif_wr_data),
+      .s_cpuif_wr_biten(s_cpuif_wr_biten),
+      .s_cpuif_req_stall_wr(s_cpuif_req_stall_wr),
+      .s_cpuif_req_stall_rd(s_cpuif_req_stall_rd),
+      .s_cpuif_rd_ack(s_cpuif_rd_ack),
+      .s_cpuif_rd_err(s_cpuif_rd_err),
+      .s_cpuif_rd_data(s_cpuif_rd_data),
+      .s_cpuif_wr_ack(s_cpuif_wr_ack),
+      .s_cpuif_wr_err(s_cpuif_wr_err),
 
       .dat_read_valid_hw_i(dat_read_valid_hw),
       .dat_index_hw_i(dat_index_hw),
@@ -654,11 +662,11 @@ module i3c
       .dct_wdata_hw_i(dct_wdata_hw),
       .dct_rdata_hw_o(dct_rdata_hw),
 
-      .dat_mem_src_i,
-      .dat_mem_sink_o,
+      .dat_mem_src_i(dat_mem_src_i),
+      .dat_mem_sink_o(dat_mem_sink_o),
 
-      .dct_mem_src_i,
-      .dct_mem_sink_o,
+      .dct_mem_src_i(dct_mem_src_i),
+      .dct_mem_sink_o(dct_mem_sink_o),
 
       .hwif_tti_o(hwif_tti_out),
       .hwif_tti_i(hwif_tti_inp),
@@ -726,7 +734,9 @@ module i3c
       .t_f_o(t_f),
       .t_bus_free_o(t_bus_free),
       .t_bus_idle_o(t_bus_idle),
-      .t_bus_available_o(t_bus_available)
+      .t_bus_available_o(t_bus_available),
+
+      .rst_action_i(rst_action)
   );
 
   // TTI RX Descriptor queue
@@ -939,6 +949,7 @@ module i3c
       .ctl_tti_tx_data_queue_start_thld_trig_o(tti_tx_queue_start_thld_trig),
       .ctl_tti_tx_data_queue_ready_thld_o(tti_tx_queue_ready_thld),
       .ctl_tti_tx_data_queue_ready_thld_trig_o(tti_tx_queue_ready_thld_trig),
+      .ctl_tti_tx_host_nack_i(tti_tx_host_nack),
 
       // TTI In-band Interrupt (IBI) queue
       .ctl_tti_ibi_queue_full_o(tti_ibi_queue_full),
@@ -952,7 +963,7 @@ module i3c
       .irq_o(), // TODO: Connect me
 
       // I2C/I3C bus condition detection
-      .ctl_bus_start_i(bus_start),
+      .ctl_bus_start_i(bus_start | bus_rstart), // S/Sr are both used to reset PEC
       .ctl_bus_stop_i(bus_stop),
 
       // Received I2C/I3C address along with RnW# bit
