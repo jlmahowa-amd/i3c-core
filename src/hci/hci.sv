@@ -171,12 +171,15 @@ module hci
   I3CCSR_pkg::I3CCSR__DCT__out_t dct_o;
   I3CCSR_pkg::I3CCSR__DCT__in_t  dct_i;
 
+
   // TTI CSR interface
   assign hwif_tti_o = hwif_out.I3C_EC.TTI;
   assign hwif_in.I3C_EC.TTI = hwif_tti_i;
 
   // Recovery CSR interface
   assign hwif_rec_o = hwif_out.I3C_EC.SecFwRecoveryIf;
+
+  // TODO: Use this if
   assign hwif_in.I3C_EC.SecFwRecoveryIf = hwif_rec_i;
 
   // Reset control
@@ -303,29 +306,6 @@ module hci
 
   end : wire_hwif
 
-  // TTI
-  logic tti_rx_desc_queue_rd_ack;
-  logic [TtiRxDataWidth-1:0] tti_rx_desc_queue_rd_data;
-  logic tti_tx_desc_queue_wr_ack;
-  logic tti_rx_queue_rd_ack;
-  logic [TtiRxDataWidth-1:0] tti_rx_queue_rd_data;
-  logic tti_tx_queue_wr_ack;
-  logic tti_ibi_queue_wr_ack;
-
-  always_comb begin : wire_hwif_tti
-    hwif_in.I3C_EC.TTI.RX_DESC_QUEUE_PORT.rd_ack = tti_rx_desc_queue_rd_ack;
-    hwif_in.I3C_EC.TTI.RX_DESC_QUEUE_PORT.rd_data = tti_rx_desc_queue_rd_data;
-
-    hwif_in.I3C_EC.TTI.RX_DATA_PORT.rd_ack = tti_rx_queue_rd_ack;
-    hwif_in.I3C_EC.TTI.RX_DATA_PORT.rd_data = tti_rx_queue_rd_data;
-
-    hwif_in.I3C_EC.TTI.TX_DESC_QUEUE_PORT.wr_ack = tti_tx_desc_queue_wr_ack;
-
-    hwif_in.I3C_EC.TTI.TX_DATA_PORT.wr_ack = tti_tx_queue_wr_ack;
-
-    hwif_in.I3C_EC.TTI.IBI_PORT.wr_ack = tti_ibi_queue_wr_ack;
-  end : wire_hwif_tti
-
   always_comb begin : wire_hwif_ccc
     hwif_in.I3C_EC.StdbyCtrlMode.STBY_CR_CCC_CONFIG_RSTACT_PARAMS.RST_ACTION.next = rst_action_i;
   end : wire_hwif_ccc
@@ -383,6 +363,19 @@ module hci
 
   logic unused_rx_desc_start_thld_trig, unused_tx_desc_start_thld_trig;
 
+
+  logic hci_tx_full;
+  logic hci_tx_empty;
+  logic hci_tx_rvalid;
+  logic hci_tx_rready;
+  logic [31:0] hci_tx_rdata;
+
+  logic hci_rx_full;
+  logic hci_rx_empty;
+  logic hci_rx_wvalid;
+  logic hci_rx_wready;
+  logic [31:0] hci_rx_wdata;
+
   queues #(
       .TxDescFifoDepth(HciCmdFifoDepth),
       .RxDescFifoDepth(HciRespFifoDepth),
@@ -436,13 +429,16 @@ module hci
       .tx_desc_reg_rst_we_o(cmd_reset_ctrl_we),
       .tx_desc_reg_rst_data_o(cmd_reset_ctrl_next),
 
-      .rx_full_o(hci_rx_full_o),
+      // mod
+      .rx_full_o(hci_rx_full),
       .rx_start_thld_trig_o(hci_rx_start_thld_trig_o),
       .rx_ready_thld_trig_o(hci_rx_ready_thld_trig_o),
-      .rx_empty_o(hci_rx_empty_o),
-      .rx_wvalid_i(hci_rx_wvalid_i),
-      .rx_wready_o(hci_rx_wready_o),
-      .rx_wdata_i(hci_rx_wdata_i),
+      .rx_empty_o(hci_rx_empty),
+      .rx_wvalid_i(hci_rx_wvalid),
+      .rx_wready_o(hci_rx_wready),
+      .rx_wdata_i(hci_rx_wdata),
+
+      // csr: leave as-is
       .rx_req_i(rx_req),
       .rx_ack_o(rx_rd_ack),
       .rx_data_o(rx_rd_data),
@@ -453,13 +449,16 @@ module hci
       .rx_reg_rst_we_o(rx_reset_ctrl_we),
       .rx_reg_rst_data_o(rx_reset_ctrl_next),
 
-      .tx_full_o(hci_tx_full_o),
+      // mod
+      .tx_full_o(hci_tx_full),
       .tx_start_thld_trig_o(hci_tx_start_thld_trig_o),
       .tx_ready_thld_trig_o(hci_tx_ready_thld_trig_o),
-      .tx_empty_o(hci_tx_empty_o),
-      .tx_rvalid_o(hci_tx_rvalid_o),
-      .tx_rready_i(hci_tx_rready_i),
-      .tx_rdata_o(hci_tx_rdata_o),
+      .tx_empty_o(hci_tx_empty),
+      .tx_rvalid_o(hci_tx_rvalid),
+      .tx_rready_i(hci_tx_rready),
+      .tx_rdata_o(hci_tx_rdata),
+
+      // csr : leave as-is
       .tx_req_i(tx_req),
       .tx_ack_o(tx_wr_ack),
       .tx_data_i(tx_wr_data),
@@ -470,6 +469,18 @@ module hci
       .tx_reg_rst_we_o(tx_reset_ctrl_we),
       .tx_reg_rst_data_o(tx_reset_ctrl_next)
   );
+
+  // Assumptions for this code:
+  // TX FIFO does not produce valid if it is empty
+  // If RX FIFO is full, we will not assert rready
+  // if RX FIFO is full, it will not produce wready
+
+  assign hci_tx_rready  = hci_tx_rvalid && (~hci_rx_full);
+  assign hci_rx_wvalid  = hci_rx_wready && hci_tx_rvalid;
+  assign hci_rx_wdata   = hci_tx_rdata;
+
+  // Route out for the CSR
+  assign hci_rx_empty_o = hci_rx_empty;
 
   configuration xconfiguration (
       .clk_i,

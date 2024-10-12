@@ -72,7 +72,7 @@ module i3c_target_fsm
     input  logic                   tx_fifo_rvalid_i,  // indicates there is valid data in tx_fifo
     output logic                   tx_fifo_rready_o,  // pop entry from tx_fifo
     input  logic [TxFifoWidth-1:0] tx_fifo_rdata_i,   // byte in tx_fifo to be sent to host
-    output logic                   tx_host_nack_o,    // a NACK has been received during transmission
+    output logic                   tx_host_nack_o,    // NACK has been received during transmission
 
     // RX FIFO used for Target Write
     output logic                   rx_fifo_wvalid_o,  // high if there is valid data in rx_fifo
@@ -175,9 +175,6 @@ module i3c_target_fsm
                             // is a reserved byte it's i3c with the caveat that this might get overriden
                             // by a later address read
   logic tbit_after_byte_d;
-
-  // TODO: Set transfer type based on the discovered state
-  assign transfer_type_o = 0;
 
   // IBI
   logic ibi_handling;  // Asserted when an IBI is transmitter
@@ -364,6 +361,9 @@ module i3c_target_fsm
     if (!rst_ni) bus_rnw <= '0;
     else if (input_strobe & (bit_idx == 4'd7)) bus_rnw <= input_byte[0];
 
+  // FIXME: Add CCC type transfer
+  assign transfer_type_o = {1'b0, bus_rnw};
+
   // An artificial acq_fifo_wready is used here to ensure we always have
   // space to asborb a stop / repeat start format byte.  Without guaranteeing
   // space for this entry, the target module would need to stretch the
@@ -379,76 +379,65 @@ module i3c_target_fsm
 
   // State definitions
   // TODO: Controller side stretching handler
-  typedef enum logic [6:0] {
-    Idle = 'd0,
+  typedef enum logic [7:0] {
+    Idle = 'h00,
+    // Target function waits for stop condition
+    WaitForStop = 'h01,
     // Target function receives start and address from external host
-    AcquireStart = 'd1,
-    AddrRead = 'd2,
+    AcquireStart = 'h02,
+    AddrRead = 'h03,
     // Target function acknowledges the address and returns an ack to external host
-    AddrAckWait = 'd3,
-    AddrAckSetup = 'd4,
-    AddrAckPulse = 'd5,
-    AddrAckHold = 'd6,
-    // TODO: Tbit
-    //  TbitWait, TbitSetup, TbitPulse, TbitHold
+    AddrAckWait = 'h10,
+    AddrAckSetup = 'h11,
+    AddrAckPulse = 'h12,
+    AddrAckHold = 'h13,
     // Target function sends read data to external host-receiver
-    TransmitWait = 'd7,
-    TransmitSetup = 'd8,
-    TransmitPulse = 'd9,
-    TransmitHold = 'd10,
-    // Target function receives ack from external host
-    TransmitTbit = 'd11,
-    TransmitTbitPulse = 'd12,
-    WaitForStop = 'd13,
+    TransmitWait = 'h21,
+    TransmitWaitOd = 'h22,
+    TransmitSetup = 'h23,
+    TransmitPulse = 'h24,
+    TransmitHold = 'h25,
+    // Target function sends T-bit to external host-receiver
+    TbitWait = 'h31,
+    TbitSetup = 'h32,
+    TbitPulse = 'h33,
+    TbitHold = 'h34,
     // Target function receives write data from the external host
-    AcquireByte = 'd14,
+    AcquireByte = 'h40,
     // Target function sends ack to external host
-    AcquireAckWait = 'd15,
-    AcquireAckSetup = 'd16,
-    AcquireAckPulse = 'd17,
-    AcquireAckHold = 'd18,
-
+    AcquireAckWait = 'h50,
+    AcquireAckSetup = 'h51,
+    AcquireAckPulse = 'h52,
+    AcquireAckHold = 'h53,
     // If in AddrRead we read I3C Reserved Byte, we go to ACK here
-    RsvdByteAckWait  = 'd19,
-    RsvdByteAckSetup = 'd20,
-    RsvdByteAckPulse = 'd21,
-    RsvdByteAckHold  = 'd22,
-
+    RsvdByteAckWait = 'h60,
+    RsvdByteAckSetup = 'h61,
+    RsvdByteAckPulse = 'h62,
+    RsvdByteAckHold = 'h63,
     // Do we get SR or CCC next?
-    PostAckTBitSymbolDetect = 'd23,
-    PostAckTBitSymbolDetect2 = 'd24,
-    PostAckTBitSymbolDetect3 = 'd25,
+    PostAckTBitSymbolDetect = 'h70,
+    PostAckTBitSymbolDetect2 = 'h71,
+    PostAckTBitSymbolDetect3 = 'h72,
     // Read the CCC byte
-    CCCRead = 'd26,
-    AcquireRStart = 'd27,
-    AcquireTBitWait = 'd28,
-    AcquireTBitSetup = 'd29,
-    AcquireTBitPulse = 'd30,
-    AcquireTBitHold = 'd31,
-    IdleHDR = 'd32,
-
+    CCCRead = 'h80,
+    AcquireRStart = 'h90,
+    AcquireTBitWait = 'h91,
+    AcquireTBitSetup = 'h92,
+    AcquireTBitPulse = 'h93,
+    AcquireTBitHold = 'h94,
+    IdleHDR = 'hA0,
     // IBI start
-    AcquireIbiStart = 'd33,
+    AcquireIbiStart = 'hB0,
     // IBI address transmission
-    IbiAddrWait = 'd34,
-    IbiAddrSetup = 'd35,
-    IbiAddrPulse = 'd36,
-    IbiAddrHold = 'd37,
+    IbiAddrWait = 'hC0,
+    IbiAddrSetup = 'hC1,
+    IbiAddrPulse = 'hC2,
+    IbiAddrHold = 'hC3,
     // IBI address ACK reception
-    IbiAckWait = 'd38,
-    IbiAckSetup = 'd39,
-    IbiAckLatch = 'd40,
-    IbiAckHold = 'd41,
-    // IBI payload transmission
-    IbiTransmitWait = 'd42,
-    IbiTransmitSetup = 'd43,
-    IbiTransmitPulse = 'd44,
-    IbiTransmitHold = 'd45,
-    // IBI T-bit transmission
-    IbiTbitWait = 'd46,
-    IbiTbitSetup = 'd47,
-    IbiTbitPulse = 'd48,
-    IbiTbitHold = 'd49
+    IbiAckWait = 'hD0,
+    IbiAckSetup = 'hD1,
+    IbiAckLatch = 'hD2,
+    IbiAckHold = 'hD3
   } state_e;
 
   state_e state_q, state_d;
@@ -582,49 +571,6 @@ module i3c_target_fsm
         sda_d = sda_r;
       end
 
-      IbiTransmitWait: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-      IbiTransmitSetup: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-      IbiTransmitPulse: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-      IbiTransmitHold: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-
-      IbiTbitWait: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-      IbiTbitSetup: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-        if (tcount_q == 20'd1) ibi_fifo_rready_o = 1'b1;
-      end
-      IbiTbitPulse: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-      IbiTbitHold: begin
-        target_idle_o = 1'b0;
-        target_transmitting_o = 1'b1;
-        sda_d = sda_r;
-      end
-
       // AcquireStart: hold for the end of the start condition
       AcquireStart: begin
         target_idle_o = 1'b0;
@@ -685,46 +631,94 @@ module i3c_target_fsm
           end
         end
       end
-      // TransmitWait: Check if data is available prior to transmit
+
+      PostAckTBitSymbolDetect: begin
+        target_idle_o = 1'b0;
+      end
+      PostAckTBitSymbolDetect2: begin
+        target_idle_o = 1'b0;
+      end
+      PostAckTBitSymbolDetect3: begin
+        target_idle_o = 1'b0;
+      end
+
+      AcquireTBitWait: begin
+        target_idle_o = 1'b0;
+      end
+      AcquireTBitSetup: begin
+        target_idle_o = 1'b0;
+      end
+      AcquireTBitPulse: begin
+        target_idle_o = 1'b0;
+      end
+
+      // Target to controller data transmission
       TransmitWait: begin
         target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
       end
-      // TransmitSetup: target shifts indexed bit onto SDA while SCL is low
+      TransmitWaitOd: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+        // sda_d = 1'b0;
+      end
       TransmitSetup: begin
         target_idle_o = 1'b0;
-        sda_d = tx_fifo_rdata_i[3'(7-bit_idx)];
         target_transmitting_o = 1'b1;
+        sda_d = sda_r;
       end
-      // TransmitPulse: target holds indexed bit onto SDA while SCL is released
       TransmitPulse: begin
         target_idle_o = 1'b0;
-
-        // Hold value
-        sda_d = sda_q;
         target_transmitting_o = 1'b1;
+        sda_d = sda_r;
       end
-      // TransmitHold: target holds indexed bit onto SDA while SCL is pulled low, for the hold time
       TransmitHold: begin
         target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
 
-        // Hold value
-        sda_d = sda_q;
+      // Target to controller T-byte transmission
+      TbitWait: begin
+        target_idle_o = 1'b0;
         target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+        if (!scl_i) begin
+          if (ibi_handling) ibi_fifo_rready_o = 1'b1;
+          else tx_fifo_rready_o = 1'b1;
+      end
+      end
+      TbitSetup: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      TbitPulse: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
+      TbitHold: begin
+        target_idle_o = 1'b0;
+        target_transmitting_o = 1'b1;
+        sda_d = sda_r;
+      end
 
-        // Pop FIFO
-        if (tcount_q == 20'd1 && bit_ack)
-          tx_fifo_rready_o = 1'b1;
-      end
-      // TransmitTbit: target waits for host to ACK transmission
-      TransmitTbit: begin
-        target_transmitting_o = 1'b1;
-        target_idle_o = 1'b0;
-        sda_d = tx_fifo_rvalid_i; // Set T bit if there's more data in TX fifo
-      end
-      TransmitTbitPulse: begin
-        target_transmitting_o = 1'b1;
+      IbiAckWait: begin
         target_idle_o = 1'b0;
       end
+      IbiAckSetup: begin
+        target_idle_o = 1'b0;
+      end
+      IbiAckLatch: begin
+        target_idle_o = 1'b0;
+      end
+      IbiAckHold: begin
+        target_idle_o = 1'b0;
+      end
+
       // WaitForStop just waiting for host to trigger a stop after nack
       WaitForStop: begin
         target_idle_o = 1'b0;
@@ -810,7 +804,6 @@ module i3c_target_fsm
 
       AcquireTBitHold: begin
         target_idle_o = 1'b0;
-        sda_d = 1'b0;
         target_transmitting_o = 1'b1;
         if (host_tbit_ok) begin
           rx_fifo_wvalid_o = '1;
@@ -868,17 +861,23 @@ module i3c_target_fsm
 
   always_ff @(posedge clk_i or negedge rst_ni)
     if (!rst_ni) ibi_payload <= '0;
-    else if (state_q == Idle) ibi_payload <= '0;
-    else if (state_q == IbiTransmitWait) ibi_payload <= 1'b1;
-    else if (state_q == IbiTbitWait) ibi_payload <= 1'b1;
+    else
+      unique case (state_q)
+        Idle: ibi_payload <= '0;
+        TransmitWait: ibi_payload <= ibi_handling;
+        TransmitWaitOd: ibi_payload <= ibi_handling;
+        TbitWait: ibi_payload <= ibi_handling;
+        default: ibi_payload <= ibi_payload;
+      endcase
 
   always_ff @(posedge clk_i or negedge rst_ni)
     if (!rst_ni) sda_r <= 1'b1;
-    else if (state_q == IbiAddrSetup || state_q == IbiTransmitSetup)
+    //  || state_q == TransmitWait || state_q == TransmitWaitOd
+    //
+    else if (state_q == IbiAddrSetup || state_q == TransmitSetup || state_q == AddrAckHold)
       sda_r <= output_byte[3'(7-bit_idx)];
-    else if (state_q == IbiTbitSetup)
-      // TODO: We are sending T=0 as we currently assume there's only one IBI byte
-      sda_r <= 1'b0;
+    else if (state_q == TbitSetup)
+      sda_r <= (ibi_handling & ibi_fifo_rvalid_i) | (~ibi_handling & tx_fifo_rvalid_i);
 
   // Conditional state transition
   // TODO: Fix latch
@@ -890,6 +889,7 @@ module i3c_target_fsm
     input_byte_clr = 1'b0;
     enter_hdr_after_stop_clr = 1'b0;
     bus_rstart_det_o = 1'b0;
+    sel_od_pp_o = 1'b0;
     unique case (state_q)
       // Idle: initial state, SDA and SCL are released (high)
       Idle: begin
@@ -898,8 +898,6 @@ module i3c_target_fsm
         if (ibi_fifo_rvalid_i) state_d = AcquireIbiStart;
         // The bus is idle. Waiting for a Start.
         post_ack_decision_d = Idle;
-        // Initially don't drive the bus using push-pull
-        sel_od_pp_o = 1'b0;
       end
       // AcquireIbiStart:
       AcquireIbiStart: begin
@@ -998,7 +996,9 @@ module i3c_target_fsm
       end
       // AddrAckHold: target pulls SDA low while SCL is pulled low
       AddrAckHold: begin
-        if (tcount_q == 20'd1) begin
+        // FIXME: WIP: Needed to increase this timing to respect setup of next push pull
+        // if (tcount_q == 20'd1) begin
+        if (tcount_q == 20'd5) begin
           if (nack_transaction_q) begin
             // If the Target is set to NACK already, release SDA and wait
             // for a Stop. This isn't an ideal response for SMBus reads, since
@@ -1008,58 +1008,88 @@ module i3c_target_fsm
             state_d = WaitForStop;
           end else if (rw_bit_q) begin
             // Not NACKing automatically, not stretching, and it's a read.
-            state_d = TransmitWait;
+            state_d = TransmitWaitOd;
           end else begin
             // Not NACKing automatically, not stretching, and it's a write.
             state_d = AcquireByte;
           end
         end
       end
-      // TransmitWait: Evaluate whether there are entries to send first
+
+      // Transmit data
       TransmitWait: begin
-        state_d = TransmitSetup;
-      end
-      // TransmitSetup: target shifts indexed bit onto SDA while SCL is low
-      TransmitSetup: begin
-        if (scl_i) state_d = TransmitPulse;
-      end
-      // TransmitPulse: target shifts indexed bit onto SDA while SCL is released
-      TransmitPulse: begin
+        sel_od_pp_o = 1'b1;
         if (!scl_i) begin
+        state_d = TransmitSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+      end
+      end
+      TransmitWaitOd: begin
+        if (!scl_i) begin
+          state_d = TransmitSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
+        end
+      end
+      TransmitSetup: begin
+        sel_od_pp_o = 1'b1;
+        if (tcount_q == 20'd1) begin
+          state_d = TransmitPulse;
+      end
+      end
+      TransmitPulse: begin
+        sel_od_pp_o = 1'b1;
+        if (scl_i) begin
           state_d = TransmitHold;
           load_tcount = 1'b1;
           tcount_sel = tHoldData;
         end
       end
-      // TransmitHold: target shifts indexed bit onto SDA while SCL is pulled low
       TransmitHold: begin
+        sel_od_pp_o = 1'b1;
         if (tcount_q == 20'd1) begin
-          if (bit_ack) begin
-            state_d = TransmitTbit;
-          end else begin
+          if (bit_idx == 7) state_d = TbitWait;
+          else state_d = TransmitWait;
             load_tcount = 1'b1;
-            tcount_sel = tHoldData;
-            state_d = TransmitSetup;
+          tcount_sel  = tSetupData;
           end
         end
+
+      // Transmit T-bit
+      TbitWait: begin
+        sel_od_pp_o = 1'b1;
+        if (!scl_i) begin
+          state_d = TbitSetup;
+          load_tcount = 1'b1;
+          tcount_sel = tSetupData;
       end
-      // Wait for clock to become positive.
-      TransmitTbit: begin
-        if (scl_i) begin
-          state_d = TransmitTbitPulse;
+      end
+      TbitSetup: begin
+        sel_od_pp_o = 1'b1;
+        if (tcount_q == 20'd1) begin
+          state_d = TbitPulse;
         end
       end
-      // TransmitTbitPulse
-      TransmitTbitPulse: begin
-        if (!scl_i) begin
-          // We have data, continue
-          // FIXME: The decision where to go from here should be actually made
-          // in TransmitTbit
-          if (tx_fifo_rvalid_i) begin
-            state_d = TransmitWait;
+      TbitPulse: begin
+        sel_od_pp_o = 1'b1;
+        if (scl_i) begin
+          state_d = TbitHold;
+          load_tcount = 1'b1;
+          tcount_sel = tHoldData;
+        end
+      end
+      TbitHold: begin
+        if (tcount_q == 20'd1) begin
+          // Next data byte or wait for stop
+          if ((ibi_handling & ibi_fifo_rvalid_i) | (~ibi_handling & tx_fifo_rvalid_i)) begin
+            state_d = TransmitWaitOd;
           end else begin
             state_d = WaitForStop;
           end
+
+          load_tcount = 1'b1;
+          tcount_sel  = tSetupData;
         end
       end
 
@@ -1106,7 +1136,7 @@ module i3c_target_fsm
       IbiAckLatch: begin
         if (scl_i) begin
           if (sda_i) post_ack_decision_d = WaitForStop;  // NACK
-          else post_ack_decision_d = IbiTransmitWait;  // ACK
+          else post_ack_decision_d = TransmitWaitOd;  // ACK
           state_d = IbiAckHold;
           load_tcount = 1'b1;
           tcount_sel = tHoldData;
@@ -1118,71 +1148,10 @@ module i3c_target_fsm
         end
       end
 
-      // IBI payload
-      IbiTransmitWait: begin
-        sel_od_pp_o = 1'b1;
-        if (!scl_i) begin
-          state_d = IbiTransmitSetup;
-          load_tcount = 1'b1;
-          tcount_sel = tSetupData;
-        end
-      end
-      IbiTransmitSetup: begin
-        if (tcount_q == 20'd1) begin
-          state_d = IbiTransmitPulse;
-        end
-      end
-      IbiTransmitPulse: begin
-        if (scl_i) begin
-          state_d = IbiTransmitHold;
-          load_tcount = 1'b1;
-          tcount_sel = tHoldData;
-        end
-      end
-      IbiTransmitHold: begin
-        if (tcount_q == 20'd1) begin
-          if (bit_idx == 7) state_d = IbiTbitWait;
-          else state_d = IbiTransmitWait;
-          load_tcount = 1'b1;
-          tcount_sel  = tSetupData;
-        end
-      end
-
-      // IBI payload T-bit
-      IbiTbitWait: begin
-        if (!scl_i) begin
-          state_d = IbiTbitSetup;
-          load_tcount = 1'b1;
-          tcount_sel = tSetupData;
-        end
-      end
-      IbiTbitSetup: begin
-        if (tcount_q == 20'd1) begin
-          state_d = IbiTbitPulse;
-        end
-      end
-      IbiTbitPulse: begin
-        if (scl_i) begin
-          state_d = IbiTbitHold;
-          load_tcount = 1'b1;
-          tcount_sel = tHoldData;
-        end
-      end
-      IbiTbitHold: begin
-        if (tcount_q == 20'd1) begin
-          // TODO: Currently we assume that there's no more than one byte of IBI payload
-          state_d = WaitForStop;
-          load_tcount = 1'b1;
-          tcount_sel = tSetupData;
-          sel_od_pp_o = 1'b0;  // Release the bus
-        end
-      end
-
       // An inert state just waiting for host to issue a stop
       // Cannot cycle back to idle directly as other events depend on the system being
       // non-idle.
       WaitForStop: begin
-        sel_od_pp_o = 1'b0;
         state_d = WaitForStop;
       end
       // AcquireByte: target acquires a byte

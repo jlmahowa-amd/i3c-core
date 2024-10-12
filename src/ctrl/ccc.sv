@@ -37,9 +37,7 @@ module ccc
   logic [7:0] defining_byte;
   logic       defining_byte_valid;
   logic [7:0] command_data;
-
-  // CCC handling logic
-  logic clear_command_code;
+  logic       clear_command_code;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : proc_latch_inputs
     if (~rst_ni) begin
@@ -72,6 +70,8 @@ module ccc
 
   // Decode CCC
   logic is_direct_cmd = command_code[7];  // 0 - BCast, 1 - Direct
+
+
 
   always_comb begin
     response_valid_o = '0;

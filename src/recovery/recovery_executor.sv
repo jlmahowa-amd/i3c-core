@@ -6,6 +6,7 @@
     TTI data queues.
 
     FIXME: Check if cmd_len_i is valid w.r.t. cmd_cmd_i
+    FIXME: Rework latches and defaults of cases
 */
 module recovery_executor
   import i3c_pkg::*;
@@ -148,34 +149,26 @@ module recovery_executor
 
       CsrWrite: begin
         state_d = CsrWrite;
-        if (rx_ack_i & (dcnt == 1))
-          state_d = Done;
+        if (rx_ack_i & (dcnt == 1)) state_d = Done;
       end
 
       CsrRead: begin
         state_d = CsrReadLen;
-        if (res_ready_i)
-          state_d = CsrReadLen;
+        if (res_ready_i) state_d = CsrReadLen;
       end
 
-      CsrReadLen:
-        state_d = CsrReadData;
+      CsrReadLen: state_d = CsrReadData;
 
       CsrReadData: begin
         state_d = CsrReadData;
-        if (host_abort_i)
-          state_d = Error; // FIXME: Should we make this an error ?
-        else if (res_dvalid_o & res_dready_i & (dcnt == 0))
-          state_d = Done;
+        if (host_abort_i) state_d = Error;  // FIXME: Should we make this an error ?
+        else if (res_dvalid_o & res_dready_i & (dcnt == 0)) state_d = Done;
       end
 
-      Error:
-        state_d = Done;
-      Done:
-        state_d = Idle;
+      Error: state_d = Done;
+      Done:  state_d = Idle;
 
-      default:
-        state_d = Idle;
+      default: state_d = Idle;
     endcase
 
   // ....................................................
@@ -186,25 +179,17 @@ module recovery_executor
       Idle:
         if (cmd_valid_i)
           dcnt <= (|cmd_len_i[1:0]) ? (cmd_len_i / 4 + 1) : (cmd_len_i / 4);  // Round up
-      CsrWrite:
-        if (rx_ack_i)
-          dcnt <= dcnt - 1;
-      CsrReadLen:
-        dcnt <= csr_length;
-      CsrReadData:
-        if (res_dvalid_o & res_dready_i)
-          dcnt <= dcnt - 1;
+      CsrWrite: if (rx_ack_i) dcnt <= dcnt - 1;
+      CsrReadLen: dcnt <= csr_length;
+      CsrReadData: if (res_dvalid_o & res_dready_i) dcnt <= dcnt - 1;
       default: dcnt <= dcnt;
     endcase
 
   // Byte counter
   always_ff @(posedge clk_i)
     unique case (state_q)
-      Idle:
-        bcnt <= '0;
-      CsrReadData:
-        if (res_dvalid_o & res_dready_i)
-          bcnt <= bcnt + 1;
+      Idle: bcnt <= '0;
+      CsrReadData: if (res_dvalid_o & res_dready_i) bcnt <= bcnt + 1;
       default: bcnt <= bcnt;
     endcase
 
@@ -250,20 +235,22 @@ module recovery_executor
       Idle:
       if (cmd_valid_i)
         unique case (cmd_cmd_i)
-          CMD_PROT_CAP:             csr_length <= 'd15;
-          CMD_DEVICE_ID:            csr_length <= 'd24;
-          CMD_DEVICE_STATUS:        csr_length <= 'd8;
-          CMD_DEVICE_RESET:         csr_length <= 'd3;
-          CMD_RECOVERY_CTRL:        csr_length <= 'd3;
-          CMD_RECOVERY_STATUS:      csr_length <= 'd2;
-          CMD_HW_STATUS:            csr_length <= 'd4;
-          CMD_INDIRECT_FIFO_CTRL:   csr_length <= 'd6;
-          CMD_INDIRECT_FIFO_STATUS: csr_length <= 'd20;
+          CMD_PROT_CAP:             csr_length = 'd15;
+          CMD_DEVICE_ID:            csr_length = 'd24;
+          CMD_DEVICE_STATUS:        csr_length = 'd8;
+          CMD_DEVICE_RESET:         csr_length = 'd3;
+          CMD_RECOVERY_CTRL:        csr_length = 'd3;
+          CMD_RECOVERY_STATUS:      csr_length = 'd2;
+          CMD_HW_STATUS:            csr_length = 'd4;
+          CMD_INDIRECT_FIFO_CTRL:   csr_length = 'd6;
+          CMD_INDIRECT_FIFO_STATUS: csr_length = 'd20;
+          default:                  csr_length = '0;
         endcase
     endcase
 
   // CSR read data mux
-  always_ff @(posedge clk_i) unique case(csr_sel)
+  always_ff @(posedge clk_i)
+    unique case (csr_sel)
     CSR_PROT_CAP_0:             csr_data <= hwif_rec_i.PROT_CAP_0.PLACEHOLDER.value;
     CSR_PROT_CAP_1:             csr_data <= hwif_rec_i.PROT_CAP_1.PLACEHOLDER.value;
     CSR_PROT_CAP_2:             csr_data <= hwif_rec_i.PROT_CAP_2.PLACEHOLDER.value;
@@ -290,6 +277,7 @@ module recovery_executor
     CSR_INDIRECT_FIFO_STATUS_3: csr_data <= hwif_rec_i.INDIRECT_FIFO_STATUS_3.PLACEHOLDER.value;
     CSR_INDIRECT_FIFO_STATUS_4: csr_data <= hwif_rec_i.INDIRECT_FIFO_STATUS_4.PLACEHOLDER.value;
     CSR_INDIRECT_FIFO_STATUS_5: csr_data <= hwif_rec_i.INDIRECT_FIFO_STATUS_5.PLACEHOLDER.value;
+      default: csr_data <= '0;
   endcase
 
   // ....................................................
@@ -365,18 +353,14 @@ module recovery_executor
   // Transmitt valid
   always_ff @(posedge clk_i)
     unique case (state_q)
-      CsrReadLen:
-        if (res_ready_i)
-            res_valid_o <= 1'd1;
+      CsrReadLen: if (res_ready_i) res_valid_o <= 1'd1;
       default: res_valid_o <= '0;
     endcase
 
   // Transmitt length
   always_ff @(posedge clk_i)
     unique case (state_q)
-      CsrReadLen:
-        if (res_ready_i)
-          res_len_o <= csr_length;
+      CsrReadLen: if (res_ready_i) res_len_o <= csr_length;
     endcase
 
   // Transmitt data valid
@@ -385,10 +369,10 @@ module recovery_executor
   // Transmitt data
   always_comb
     unique case (bcnt)
-      'd0: res_data_o <= csr_data[ 7: 0];
-      'd1: res_data_o <= csr_data[15: 8];
-      'd2: res_data_o <= csr_data[23:16];
-      'd3: res_data_o <= csr_data[31:24];
+      'd0: res_data_o = csr_data[7:0];
+      'd1: res_data_o = csr_data[15:8];
+      'd2: res_data_o = csr_data[23:16];
+      'd3: res_data_o = csr_data[31:24];
     endcase
 
   // Transmitt data last
